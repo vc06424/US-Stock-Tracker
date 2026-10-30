@@ -41,7 +41,8 @@
       ExternalLink: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>,
       Key: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" /></svg>,
       Lightning: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>,
-      Alert: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+      Alert: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>,
+      Shield: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
     };
 
     const cleanSymbol = (input) => {
@@ -105,7 +106,7 @@
 
     function App() {
       // Navigation
-      const [view, setView] = useState('tqqq'); // 'tqqq', 'portfolio', 'add', 'search', 'history', 'edit'
+      const [view, setView] = useState('tqqq'); // 'tqqq', 'hi5_core', 'portfolio', 'add', 'search', 'history', 'edit'
 
       // Persistent Data
       const [records, setRecords] = useState(() => {
@@ -119,6 +120,17 @@
 
       const [finnhubApiKey, setFinnhubApiKey] = useState(() => {
         return localStorage.getItem('st_finnhub_key') || '';
+      });
+
+      // Hi5 & Core Tickers Persistent Config
+      const [hi5Tickers, setHi5Tickers] = useState(() => {
+        const saved = localStorage.getItem('st_hi5_tickers');
+        return saved ? JSON.parse(saved) : ['RSP', 'VOO', 'QQQ', 'SCHD', 'IWM'];
+      });
+
+      const [coreTickers, setCoreTickers] = useState(() => {
+        const saved = localStorage.getItem('st_core_tickers');
+        return saved ? JSON.parse(saved) : ['AAPL', 'MSFT', 'GOOGL'];
       });
 
       // TQQQ Strategy Specific State
@@ -158,6 +170,7 @@
       const [formDate, setFormDate] = useState(getTodayDate());
       const [formPrice, setFormPrice] = useState('');
       const [formQty, setFormQty] = useState('');
+      const [formCategory, setFormCategory] = useState('stock_list'); // 'stock_list' or 'core_stocks'
 
       // Search State
       const [searchQuery, setSearchQuery] = useState('');
@@ -174,13 +187,15 @@
       useEffect(() => { localStorage.setItem('st_custom_beta', customBeta); }, [customBeta]);
       useEffect(() => { localStorage.setItem('st_vix_value', vixValue); }, [vixValue]);
       useEffect(() => { localStorage.setItem('st_tqqq_notes', tqqqNotes); }, [tqqqNotes]);
+      useEffect(() => { localStorage.setItem('st_hi5_tickers', JSON.stringify(hi5Tickers)); }, [hi5Tickers]);
+      useEffect(() => { localStorage.setItem('st_core_tickers', JSON.stringify(coreTickers)); }, [coreTickers]);
 
       // Unique Stock Symbols + Strategy tickers
       const allTrackedSymbols = useMemo(() => {
         const portfolioSyms = records.map(r => cleanSymbol(r.symbol));
-        const strategySyms = ['QQQ', 'TQQQ', 'JEPQ', 'JAAA', 'MNQ', 'VIX'];
-        return Array.from(new Set([...portfolioSyms, ...strategySyms])).filter(Boolean);
-      }, [records]);
+        const strategySyms = ['QQQ', 'TQQQ', 'JEPQ', 'JAAA', 'MNQ', 'VIX', 'RSP'];
+        return Array.from(new Set([...portfolioSyms, ...strategySyms, ...hi5Tickers, ...coreTickers])).filter(Boolean);
+      }, [records, hi5Tickers, coreTickers]);
 
       // Refresh Prices via Finnhub
       const refreshPrices = async () => {
@@ -199,11 +214,18 @@
         if (finnhubApiKey) refreshPrices();
       }, [allTrackedSymbols.join(','), finnhubApiKey]);
 
-      // Portfolio Aggregation
-      const portfolioData = useMemo(() => {
-        const group = {};
+      // Portfolio Aggregation for Stock List (general)
+      const stockListRecords = useMemo(() => {
+        return records.filter(r => !r.category || r.category === 'stock_list');
+      }, [records]);
 
-        records.forEach(r => {
+      const coreStockRecords = useMemo(() => {
+        return records.filter(r => r.category === 'core_stocks');
+      }, [records]);
+
+      const aggregateByRecords = (recList) => {
+        const group = {};
+        recList.forEach(r => {
           const sym = cleanSymbol(r.symbol);
           if (!sym) return;
 
@@ -243,7 +265,10 @@
             quote
           };
         });
-      }, [records, prices]);
+      };
+
+      const portfolioData = useMemo(() => aggregateByRecords(stockListRecords), [stockListRecords, prices]);
+      const corePortfolioData = useMemo(() => aggregateByRecords(coreStockRecords), [coreStockRecords, prices]);
 
       const totalPortfolioValue = useMemo(() => {
         return portfolioData.reduce((sum, item) => sum + item.marketValue, 0);
@@ -271,16 +296,21 @@
 
       // Index Hedging
       const numBeta = Number(customBeta) || 1.8;
-      const hedgeNotionalMarketVal = numAccountVal * numBeta; // 應對沖市值 = 帳戶價值 x Beta
+      const hedgeNotionalMarketVal = numAccountVal * numBeta; 
       const priceMnq = prices['MNQ']?.price || prices['QQQ']?.price * 40 || 20000;
       const multiplierMnq = Number(mnqContractMultiplier) || 2;
-      const singleMnqVal = priceMnq * multiplierMnq; // MNQ price x 合約乘數
+      const singleMnqVal = priceMnq * multiplierMnq; 
       const mnqContractsNeeded = singleMnqVal > 0 ? (hedgeNotionalMarketVal / singleMnqVal).toFixed(2) : '0.00';
 
       // Black Swan Insurance
       const numVix = prices['VIX']?.price || Number(vixValue) || 13.5;
       const isVixAlert = numVix < 14 || numVix > 35;
-      const blackSwanVal = numAccountVal * 0.02; // 2% of Total Amount
+      const blackSwanVal = numAccountVal * 0.02;
+
+      // RSP Data
+      const rspQuote = prices['RSP'] || {};
+      const rspChangePct = rspQuote.changePercent || 0;
+      const isRspAlert = rspChangePct <= -1.0;
 
       // Handlers
       const handleSaveRecord = () => {
@@ -294,7 +324,8 @@
           symbol: sym,
           date: formDate,
           price: Number(formPrice),
-          quantity: Number(formQty)
+          quantity: Number(formQty),
+          category: formCategory
         };
 
         if (formId) {
@@ -303,7 +334,7 @@
         } else {
           setRecords(prev => [newRecord, ...prev]);
           resetForm();
-          setView('portfolio');
+          setView(formCategory === 'core_stocks' ? 'hi5_core' : 'portfolio');
         }
       };
 
@@ -313,6 +344,7 @@
         setFormDate(getTodayDate());
         setFormPrice('');
         setFormQty('');
+        setFormCategory('stock_list');
       };
 
       const openEditRecord = (r) => {
@@ -321,6 +353,7 @@
         setFormDate(r.date);
         setFormPrice(r.price);
         setFormQty(r.quantity);
+        setFormCategory(r.category || 'stock_list');
         setView('edit');
       };
 
@@ -351,28 +384,62 @@
         setSearchLoading(false);
       };
 
+      // Helper for Hi5 & Core table calculation for a given ticker
+      const getTickerSummary = (ticker) => {
+        const sym = cleanSymbol(ticker);
+        const tickerRecs = records.filter(r => cleanSymbol(r.symbol) === sym);
+        let totalQty = 0;
+        let totalCost = 0;
+
+        tickerRecs.forEach(r => {
+          const qty = Number(r.quantity) || 0;
+          const price = Number(r.price) || 0;
+          totalQty += qty;
+          totalCost += qty * price;
+        });
+
+        const avgBuyPrice = totalQty > 0 ? totalCost / totalQty : 0;
+        const q = prices[sym] || {};
+        const currentPrice = q.price || 0;
+        const pctDiff = avgBuyPrice > 0 && currentPrice > 0 ? ((currentPrice - avgBuyPrice) / avgBuyPrice) * 100 : 0;
+        const totalAmount = totalQty * (currentPrice || avgBuyPrice);
+
+        return {
+          symbol: sym,
+          currentPrice,
+          avgBuyPrice,
+          pctDiff,
+          totalAmount,
+          totalQty
+        };
+      };
+
       // Navigation Bar
       const renderBottomNav = () => (
-        <div className="border-t border-gray-800 bg-[#161620] px-2 py-2 flex justify-around items-center sticky bottom-0 z-20 text-xs">
-          <button onClick={() => setView('tqqq')} className={`flex flex-col items-center py-1 px-2 ${view === 'tqqq' ? 'text-amber-400 font-bold' : 'text-gray-400'}`}>
+        <div className="border-t border-gray-800 bg-[#161620] px-1 py-2 flex justify-around items-center sticky bottom-0 z-20 text-xs">
+          <button onClick={() => setView('tqqq')} className={`flex flex-col items-center py-1 px-1.5 ${view === 'tqqq' ? 'text-amber-400 font-bold' : 'text-gray-400'}`}>
             <Icons.Lightning />
-            <span className="mt-1 text-[10px]">TQQQ 策略</span>
+            <span className="mt-1 text-[9px]">TQQQ 策略</span>
           </button>
-          <button onClick={() => setView('portfolio')} className={`flex flex-col items-center py-1 px-2 ${view === 'portfolio' ? 'text-cyan-400 font-bold' : 'text-gray-400'}`}>
+          <button onClick={() => setView('hi5_core')} className={`flex flex-col items-center py-1 px-1.5 ${view === 'hi5_core' ? 'text-emerald-400 font-bold' : 'text-gray-400'}`}>
+            <Icons.Shield />
+            <span className="mt-1 text-[9px]">Hi5 & Core</span>
+          </button>
+          <button onClick={() => setView('portfolio')} className={`flex flex-col items-center py-1 px-1.5 ${view === 'portfolio' ? 'text-cyan-400 font-bold' : 'text-gray-400'}`}>
             <Icons.List />
-            <span className="mt-1 text-[10px]">My Stock</span>
+            <span className="mt-1 text-[9px]">Stock List</span>
           </button>
-          <button onClick={() => { resetForm(); setView('add'); }} className={`flex flex-col items-center py-1 px-2 ${view === 'add' ? 'text-cyan-400 font-bold' : 'text-gray-400'}`}>
+          <button onClick={() => { resetForm(); setView('add'); }} className={`flex flex-col items-center py-1 px-1.5 ${view === 'add' ? 'text-cyan-400 font-bold' : 'text-gray-400'}`}>
             <Icons.Plus />
-            <span className="mt-1 text-[10px]">Add Buy</span>
+            <span className="mt-1 text-[9px]">Add Buy</span>
           </button>
-          <button onClick={() => setView('search')} className={`flex flex-col items-center py-1 px-2 ${view === 'search' || view === 'settings' ? 'text-cyan-400 font-bold' : 'text-gray-400'}`}>
+          <button onClick={() => setView('search')} className={`flex flex-col items-center py-1 px-1.5 ${view === 'search' || view === 'settings' ? 'text-cyan-400 font-bold' : 'text-gray-400'}`}>
             <Icons.Search />
-            <span className="mt-1 text-[10px]">Search/API</span>
+            <span className="mt-1 text-[9px]">Search/API</span>
           </button>
-          <button onClick={() => setView('history')} className={`flex flex-col items-center py-1 px-2 ${view === 'history' || view === 'edit' ? 'text-cyan-400 font-bold' : 'text-gray-400'}`}>
+          <button onClick={() => setView('history')} className={`flex flex-col items-center py-1 px-1.5 ${view === 'history' || view === 'edit' ? 'text-cyan-400 font-bold' : 'text-gray-400'}`}>
             <Icons.History />
-            <span className="mt-1 text-[10px]">History</span>
+            <span className="mt-1 text-[9px]">History</span>
           </button>
         </div>
       );
@@ -413,6 +480,152 @@
           </div>
 
           <div className="flex-1 overflow-y-auto no-scrollbar">
+
+            {/* PAGE: HI5 & CORE STOCKS */}
+            {view === 'hi5_core' && (
+              <div className="p-4 space-y-5">
+                
+                {/* 1st Block: Hi5 */}
+                <div className="bg-gray-900/80 border border-emerald-500/30 rounded-2xl p-4 space-y-3 shadow-lg">
+                  <div className="flex justify-between items-center border-b border-gray-800 pb-2">
+                    <h2 className="text-sm font-bold text-emerald-400 flex items-center gap-1.5">
+                      <Icons.Shield />
+                      <span>1. Hi5 ETFs</span>
+                    </h2>
+                    <span className="text-[10px] text-gray-400">5 ETF Watchlist</span>
+                  </div>
+
+                  {/* RSP Daily Change & Alert */}
+                  <div className={`p-3 rounded-xl border flex justify-between items-center text-xs ${isRspAlert ? 'bg-red-950/80 border-red-600 text-red-200 animate-pulse' : 'bg-gray-950/80 border-gray-800 text-gray-300'}`}>
+                    <div className="flex items-center gap-1.5 font-bold">
+                      {isRspAlert && <Icons.Alert />}
+                      <span>RSP 日變動 (Daily Change):</span>
+                      <span className={`text-sm ${rspChangePct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {formatPercent(rspChangePct)}
+                      </span>
+                    </div>
+                    {isRspAlert && (
+                      <span className="bg-red-600 text-white font-bold text-[10px] px-2 py-0.5 rounded-md">
+                        🚨 RSP 跌超 -1% 觸發警告！
+                      </span>
+                    )}
+                  </div>
+
+                  {/* 5 Rows Input/Display Table */}
+                  <div className="space-y-2">
+                    {hi5Tickers.map((ticker, idx) => {
+                      const data = getTickerSummary(ticker);
+                      return (
+                        <div key={idx} className="bg-gray-950/90 border border-gray-800 p-2.5 rounded-xl space-y-1.5">
+                          <div className="flex justify-between items-center">
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] text-gray-500 font-mono">#{idx + 1}</span>
+                              <input 
+                                type="text" 
+                                value={ticker}
+                                placeholder={`ETF #${idx+1}`}
+                                onChange={(e) => {
+                                  const updated = [...hi5Tickers];
+                                  updated[idx] = e.target.value.toUpperCase();
+                                  setHi5Tickers(updated);
+                                }}
+                                className="w-20 bg-gray-900 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-emerald-300 font-extrabold uppercase font-mono"
+                              />
+                            </div>
+                            <div className="text-[11px] font-bold text-white">
+                              現價: {data.currentPrice > 0 ? formatUSD(data.currentPrice) : 'N/A'}
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-3 gap-1 text-[11px] pt-1 border-t border-gray-800/60">
+                            <div>
+                              <span className="text-[9px] text-gray-400 block">均價 (Avg Price)</span>
+                              <span className="font-semibold text-gray-200">{formatUSD(data.avgBuyPrice)}</span>
+                            </div>
+                            <div>
+                              <span className="text-[9px] text-gray-400 block">現價/均價差</span>
+                              <span className={`font-bold ${data.pctDiff >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                {formatPercent(data.pctDiff)}
+                              </span>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-[9px] text-gray-400 block">總金額 (Total)</span>
+                              <span className="font-bold text-emerald-400">{formatUSD(data.totalAmount)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Remarks */}
+                  <div className="p-3 bg-emerald-950/20 border border-emerald-900/40 rounded-xl text-[11px] text-emerald-200/90 space-y-1.5 leading-relaxed">
+                    <div className="font-bold text-emerald-300">📌 RSP 定額增持執行規則 (Remarks):</div>
+                    <div>1. 某月第一次 RSP 日跌幅達到 -1% 即實施當月第一次定額增持；</div>
+                    <div>2. 如果當月不滿足條件 1，則在當月第三個星期五收盤前（不論漲跌）實施當月第一次定額增持；</div>
+                    <div>3. 在滿足條件 1 或 2 基礎上，若出現 RSP 月跌幅達到 -5%，即實施當月第二次定額增持。</div>
+                  </div>
+                </div>
+
+                {/* 2nd Block: Core Stocks */}
+                <div className="bg-gray-900/80 border border-cyan-500/30 rounded-2xl p-4 space-y-3 shadow-lg">
+                  <div className="flex justify-between items-center border-b border-gray-800 pb-2">
+                    <h2 className="text-sm font-bold text-cyan-400 flex items-center gap-1.5">
+                      <Icons.List />
+                      <span>2. Core Stocks (核心個股)</span>
+                    </h2>
+                    <span className="text-[10px] text-gray-400">3 Stock Watchlist</span>
+                  </div>
+
+                  <div className="space-y-2">
+                    {coreTickers.map((ticker, idx) => {
+                      const data = getTickerSummary(ticker);
+                      return (
+                        <div key={idx} className="bg-gray-950/90 border border-gray-800 p-2.5 rounded-xl space-y-1.5">
+                          <div className="flex justify-between items-center">
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] text-gray-500 font-mono">#{idx + 1}</span>
+                              <input 
+                                type="text" 
+                                value={ticker}
+                                placeholder={`Stock #${idx+1}`}
+                                onChange={(e) => {
+                                  const updated = [...coreTickers];
+                                  updated[idx] = e.target.value.toUpperCase();
+                                  setCoreTickers(updated);
+                                }}
+                                className="w-20 bg-gray-900 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-cyan-300 font-extrabold uppercase font-mono"
+                              />
+                            </div>
+                            <div className="text-[11px] font-bold text-white">
+                              現價: {data.currentPrice > 0 ? formatUSD(data.currentPrice) : 'N/A'}
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-3 gap-1 text-[11px] pt-1 border-t border-gray-800/60">
+                            <div>
+                              <span className="text-[9px] text-gray-400 block">均價 (Avg Price)</span>
+                              <span className="font-semibold text-gray-200">{formatUSD(data.avgBuyPrice)}</span>
+                            </div>
+                            <div>
+                              <span className="text-[9px] text-gray-400 block">現價/均價差</span>
+                              <span className={`font-bold ${data.pctDiff >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                {formatPercent(data.pctDiff)}
+                              </span>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-[9px] text-gray-400 block">總金額 (Total)</span>
+                              <span className="font-bold text-cyan-400">{formatUSD(data.totalAmount)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+              </div>
+            )}
 
             {/* PAGE: TQQQ STRATEGY */}
             {view === 'tqqq' && (
@@ -618,7 +831,7 @@
               <div className="p-4 space-y-4">
                 <div className="flex justify-between items-center">
                   <div>
-                    <h2 className="text-base font-bold text-white">My Stock List</h2>
+                    <h2 className="text-base font-bold text-white">Stock List</h2>
                     <p className="text-xs text-gray-400">Total Market Value: <span className="text-cyan-400 font-bold">{formatUSD(totalPortfolioValue)}</span></p>
                   </div>
                   <span className="text-[10px] bg-cyan-950/80 text-cyan-400 border border-cyan-800/60 px-2 py-1 rounded-md">
@@ -696,7 +909,7 @@
               </div>
             )}
 
-            {/* PAGE 1: ADD / EDIT BUY RECORD */}
+            {/* PAGE 1: ADD / EDIT BUY RECORD WITH CATEGORY CHOICE */}
             {(view === 'add' || view === 'edit') && (
               <div className="p-5 space-y-5">
                 <div className="flex justify-between items-center border-b border-gray-800 pb-2">
@@ -707,11 +920,43 @@
                 </div>
 
                 <div className="space-y-4">
+                  {/* Category Selection */}
                   <div className="space-y-1">
-                    <label className="text-xs text-gray-400 font-medium ml-1">Stock Ticker Symbol (e.g. INTC, MSFT, NVDA)</label>
+                    <label className="text-xs text-gray-400 font-medium ml-1">Put in Portfolio Category (歸類至)</label>
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setFormCategory('stock_list')}
+                        className={`py-2.5 px-3 rounded-xl border text-xs font-bold transition flex items-center justify-center gap-1.5 ${
+                          formCategory === 'stock_list' 
+                            ? 'bg-cyan-950 border-cyan-500 text-cyan-300 shadow' 
+                            : 'bg-gray-900 border-gray-800 text-gray-400 hover:text-white'
+                        }`}
+                      >
+                        <Icons.List />
+                        <span>Stock List</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setFormCategory('core_stocks')}
+                        className={`py-2.5 px-3 rounded-xl border text-xs font-bold transition flex items-center justify-center gap-1.5 ${
+                          formCategory === 'core_stocks' 
+                            ? 'bg-emerald-950 border-emerald-500 text-emerald-300 shadow' 
+                            : 'bg-gray-900 border-gray-800 text-gray-400 hover:text-white'
+                        }`}
+                      >
+                        <Icons.Shield />
+                        <span>Core Stocks</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs text-gray-400 font-medium ml-1">Stock Ticker Symbol (e.g. INTC, AAPL, RSP)</label>
                     <input 
                       type="text" 
-                      placeholder="INTC or MSFT" 
+                      placeholder="INTC or AAPL" 
                       value={formSymbol} 
                       onChange={(e) => setFormSymbol(e.target.value)}
                       className="w-full bg-gray-900/80 border border-gray-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-cyan-500 font-mono text-sm uppercase"
@@ -897,7 +1142,12 @@
                         className="bg-gray-900/60 border border-gray-800 p-3.5 rounded-xl flex justify-between items-center cursor-pointer hover:bg-gray-800/60 transition"
                       >
                         <div className="space-y-0.5">
-                          <div className="text-sm font-extrabold text-cyan-300 font-mono">{r.symbol}</div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-sm font-extrabold text-cyan-300 font-mono">{r.symbol}</span>
+                            <span className={`text-[9px] px-1.5 py-0.2 rounded font-bold ${r.category === 'core_stocks' ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-gray-800 text-gray-400'}`}>
+                              {r.category === 'core_stocks' ? 'Core' : 'List'}
+                            </span>
+                          </div>
                           <div className="text-xs text-gray-400">{r.date} • {r.quantity} shares</div>
                         </div>
                         <div className="text-right">
