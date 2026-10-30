@@ -36,4 +36,890 @@
       Search: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>,
       History: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
       Refresh: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>,
-      Trash: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1
+      Trash: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>,
+      ChevronLeft: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>,
+      ExternalLink: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>,
+      Key: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" /></svg>,
+      Lightning: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>,
+      Alert: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+    };
+
+    const cleanSymbol = (input) => {
+      if (!input) return '';
+      let sym = input.trim().toUpperCase();
+      if (sym.includes(':')) {
+        sym = sym.split(':')[1].trim();
+      }
+      return sym;
+    };
+
+    const getTodayDate = () => {
+      const d = new Date();
+      const month = `${d.getMonth() + 1}`.padStart(2, '0');
+      const day = `${d.getDate()}`.padStart(2, '0');
+      return `${d.getFullYear()}-${month}-${day}`;
+    };
+
+    const formatUSD = (val) => {
+      if (val === null || val === undefined || isNaN(val)) return '$0.00';
+      return '$' + Number(val).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    };
+
+    const formatPercent = (val) => {
+      if (val === null || val === undefined || isNaN(val)) return '0.00%';
+      const formatted = Number(val).toFixed(2) + '%';
+      return val >= 0 ? `+${formatted}` : formatted;
+    };
+
+    // Stock quote fetcher using Finnhub API exclusively
+    const fetchFinnhubQuote = async (rawSymbol, apiKey = '') => {
+      const symbol = cleanSymbol(rawSymbol);
+      if (!symbol || !apiKey || !apiKey.trim()) return null;
+
+      try {
+        const res = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(symbol)}&token=${encodeURIComponent(apiKey.trim())}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data && (data.c > 0 || data.pc > 0)) {
+            const price = data.c || data.pc;
+            const prevClose = data.pc;
+            const high = data.h || price;
+            const change = data.d || (price - prevClose);
+            const changePercent = data.dp || (prevClose ? (change / prevClose) * 100 : 0);
+            return {
+              symbol,
+              price,
+              prevClose,
+              high,
+              change,
+              changePercent,
+              source: 'Finnhub API'
+            };
+          }
+        }
+      } catch (e) {
+        console.warn(`Finnhub fetch failed for ${symbol}:`, e);
+      }
+      return null;
+    };
+
+    function App() {
+      // Navigation
+      const [view, setView] = useState('tqqq'); // 'tqqq', 'portfolio', 'add', 'search', 'history', 'edit'
+
+      // Persistent Data
+      const [records, setRecords] = useState(() => {
+        const saved = localStorage.getItem('st_records');
+        return saved ? JSON.parse(saved) : [];
+      });
+
+      const [targetAmount, setTargetAmount] = useState(() => {
+        return localStorage.getItem('st_target_amount') || '50000';
+      });
+
+      const [finnhubApiKey, setFinnhubApiKey] = useState(() => {
+        return localStorage.getItem('st_finnhub_key') || '';
+      });
+
+      // TQQQ Strategy Specific State
+      const [accountValue, setAccountValue] = useState(() => {
+        return localStorage.getItem('st_account_value') || '100000';
+      });
+
+      const [qqqHistHigh, setQqqHistHigh] = useState(() => {
+        return localStorage.getItem('st_qqq_hist_high') || '540.00';
+      });
+
+      const [qqqHighDate, setQqqHighDate] = useState(() => {
+        return localStorage.getItem('st_qqq_high_date') || '2024-07-10';
+      });
+
+      const [customBeta, setCustomBeta] = useState(() => {
+        return localStorage.getItem('st_custom_beta') || '1.80';
+      });
+
+      const [mnqContractMultiplier, setMnqContractMultiplier] = useState('2');
+
+      const [vixValue, setVixValue] = useState(() => {
+        return localStorage.getItem('st_vix_value') || '13.50';
+      });
+
+      const [tqqqNotes, setTqqqNotes] = useState(() => {
+        return localStorage.getItem('st_tqqq_notes') || '';
+      });
+
+      // Price Cache
+      const [prices, setPrices] = useState({});
+      const [loadingPrices, setLoadingPrices] = useState(false);
+
+      // Form State (Add / Edit)
+      const [formId, setFormId] = useState(null);
+      const [formSymbol, setFormSymbol] = useState('');
+      const [formDate, setFormDate] = useState(getTodayDate());
+      const [formPrice, setFormPrice] = useState('');
+      const [formQty, setFormQty] = useState('');
+
+      // Search State
+      const [searchQuery, setSearchQuery] = useState('');
+      const [searchResult, setSearchResult] = useState(null);
+      const [searchLoading, setSearchLoading] = useState(false);
+      const [searchError, setSearchError] = useState('');
+
+      useEffect(() => { localStorage.setItem('st_records', JSON.stringify(records)); }, [records]);
+      useEffect(() => { localStorage.setItem('st_target_amount', targetAmount); }, [targetAmount]);
+      useEffect(() => { localStorage.setItem('st_finnhub_key', finnhubApiKey); }, [finnhubApiKey]);
+      useEffect(() => { localStorage.setItem('st_account_value', accountValue); }, [accountValue]);
+      useEffect(() => { localStorage.setItem('st_qqq_hist_high', qqqHistHigh); }, [qqqHistHigh]);
+      useEffect(() => { localStorage.setItem('st_qqq_high_date', qqqHighDate); }, [qqqHighDate]);
+      useEffect(() => { localStorage.setItem('st_custom_beta', customBeta); }, [customBeta]);
+      useEffect(() => { localStorage.setItem('st_vix_value', vixValue); }, [vixValue]);
+      useEffect(() => { localStorage.setItem('st_tqqq_notes', tqqqNotes); }, [tqqqNotes]);
+
+      // Unique Stock Symbols + Strategy tickers
+      const allTrackedSymbols = useMemo(() => {
+        const portfolioSyms = records.map(r => cleanSymbol(r.symbol));
+        const strategySyms = ['QQQ', 'TQQQ', 'JEPQ', 'JAAA', 'MNQ', 'VIX'];
+        return Array.from(new Set([...portfolioSyms, ...strategySyms])).filter(Boolean);
+      }, [records]);
+
+      // Refresh Prices via Finnhub
+      const refreshPrices = async () => {
+        if (!finnhubApiKey.trim()) return;
+        setLoadingPrices(true);
+        const newPrices = { ...prices };
+        for (let sym of allTrackedSymbols) {
+          const q = await fetchFinnhubQuote(sym, finnhubApiKey);
+          if (q) newPrices[sym] = q;
+        }
+        setPrices(newPrices);
+        setLoadingPrices(false);
+      };
+
+      useEffect(() => {
+        if (finnhubApiKey) refreshPrices();
+      }, [allTrackedSymbols.join(','), finnhubApiKey]);
+
+      // Portfolio Aggregation
+      const portfolioData = useMemo(() => {
+        const group = {};
+
+        records.forEach(r => {
+          const sym = cleanSymbol(r.symbol);
+          if (!sym) return;
+
+          if (!group[sym]) {
+            group[sym] = { symbol: sym, records: [], totalQty: 0, totalCost: 0 };
+          }
+
+          const qty = Number(r.quantity) || 0;
+          const price = Number(r.price) || 0;
+
+          group[sym].records.push(r);
+          group[sym].totalQty += qty;
+          group[sym].totalCost += qty * price;
+        });
+
+        return Object.values(group).map(item => {
+          const sortedRecs = [...item.records].sort((a,b) => new Date(a.date) - new Date(b.date));
+          const lastRecord = sortedRecs[sortedRecs.length - 1] || {};
+          
+          const lastBuyPrice = Number(lastRecord.price) || 0;
+          const avgBuyPrice = item.totalQty > 0 ? item.totalCost / item.totalQty : 0;
+          const quote = prices[item.symbol] || {};
+          const currentPrice = quote.price || 0;
+
+          const lastDiffPct = lastBuyPrice > 0 && currentPrice > 0 ? ((currentPrice - lastBuyPrice) / lastBuyPrice) * 100 : 0;
+          const avgDiffPct = avgBuyPrice > 0 && currentPrice > 0 ? ((currentPrice - avgBuyPrice) / avgBuyPrice) * 100 : 0;
+          const marketValue = item.totalQty * (currentPrice || avgBuyPrice);
+
+          return {
+            ...item,
+            lastBuyPrice,
+            avgBuyPrice,
+            currentPrice,
+            lastDiffPct,
+            avgDiffPct,
+            marketValue,
+            quote
+          };
+        });
+      }, [records, prices]);
+
+      const totalPortfolioValue = useMemo(() => {
+        return portfolioData.reduce((sum, item) => sum + item.marketValue, 0);
+      }, [portfolioData]);
+
+      // TQQQ Strategy Calculations
+      const numAccountVal = Number(accountValue) || 0;
+      const numQqqHigh = Number(qqqHistHigh) || 1;
+      const currentQqqPrice = prices['QQQ']?.price || numQqqHigh;
+      const qqqDiffPct = numQqqHigh > 0 ? ((currentQqqPrice - numQqqHigh) / numQqqHigh) * 100 : 0;
+
+      // Combination Allocation
+      const alloc50Tqqq = numAccountVal * 0.50;
+      const alloc65Tqqq = numAccountVal * 0.65;
+      const alloc25Jepq = numAccountVal * 0.25;
+      const alloc25Jaaa = numAccountVal * 0.25;
+
+      const priceTqqq = prices['TQQQ']?.price || 70.0;
+      const priceJepq = prices['JEPQ']?.price || 55.0;
+      const priceJaaa = prices['JAAA']?.price || 50.0;
+
+      const qtyTqqq = priceTqqq > 0 ? Math.round(alloc50Tqqq / priceTqqq) : 0;
+      const qtyJepq = priceJepq > 0 ? Math.round(alloc25Jepq / priceJepq) : 0;
+      const qtyJaaa = priceJaaa > 0 ? Math.round(alloc25Jaaa / priceJaaa) : 0;
+
+      // Index Hedging
+      const numBeta = Number(customBeta) || 1.8;
+      const hedgeNotionalMarketVal = numAccountVal * numBeta; // 應對沖市值 = 帳戶價值 x Beta
+      const priceMnq = prices['MNQ']?.price || prices['QQQ']?.price * 40 || 20000;
+      const multiplierMnq = Number(mnqContractMultiplier) || 2;
+      const singleMnqVal = priceMnq * multiplierMnq; // MNQ price x 合約乘數
+      const mnqContractsNeeded = singleMnqVal > 0 ? (hedgeNotionalMarketVal / singleMnqVal).toFixed(2) : '0.00';
+
+      // Black Swan Insurance
+      const numVix = prices['VIX']?.price || Number(vixValue) || 13.5;
+      const isVixAlert = numVix < 14 || numVix > 35;
+      const blackSwanVal = numAccountVal * 0.02; // 2% of Total Amount
+
+      // Handlers
+      const handleSaveRecord = () => {
+        const sym = cleanSymbol(formSymbol);
+        if (!sym) return alert('請輸入有效的股票代碼。');
+        if (!formPrice || Number(formPrice) <= 0) return alert('請輸入有效的買入價。');
+        if (!formQty || Number(formQty) <= 0) return alert('請輸入有效的股數。');
+
+        const newRecord = {
+          id: formId || Date.now().toString(),
+          symbol: sym,
+          date: formDate,
+          price: Number(formPrice),
+          quantity: Number(formQty)
+        };
+
+        if (formId) {
+          setRecords(prev => prev.map(r => r.id === formId ? newRecord : r));
+          setView('history');
+        } else {
+          setRecords(prev => [newRecord, ...prev]);
+          resetForm();
+          setView('portfolio');
+        }
+      };
+
+      const resetForm = () => {
+        setFormId(null);
+        setFormSymbol('');
+        setFormDate(getTodayDate());
+        setFormPrice('');
+        setFormQty('');
+      };
+
+      const openEditRecord = (r) => {
+        setFormId(r.id);
+        setFormSymbol(r.symbol);
+        setFormDate(r.date);
+        setFormPrice(r.price);
+        setFormQty(r.quantity);
+        setView('edit');
+      };
+
+      const handleDeleteRecord = (id) => {
+        if (confirm('確定刪除此買入紀錄？')) {
+          setRecords(prev => prev.filter(r => r.id !== id));
+          if (view === 'edit') setView('history');
+        }
+      };
+
+      const handleSearch = async () => {
+        const sym = cleanSymbol(searchQuery);
+        if (!sym) return;
+        if (!finnhubApiKey.trim()) {
+          setSearchError('請先於 Setting 設定 Finnhub API Key 以執行搜尋。');
+          return;
+        }
+        setSearchLoading(true);
+        setSearchError('');
+        setSearchResult(null);
+
+        const res = await fetchFinnhubQuote(sym, finnhubApiKey);
+        if (res) {
+          setSearchResult(res);
+        } else {
+          setSearchError(`未能在 Finnhub 找到 ${sym} 的即時數據。`);
+        }
+        setSearchLoading(false);
+      };
+
+      // Navigation Bar
+      const renderBottomNav = () => (
+        <div className="border-t border-gray-800 bg-[#161620] px-2 py-2 flex justify-around items-center sticky bottom-0 z-20 text-xs">
+          <button onClick={() => setView('tqqq')} className={`flex flex-col items-center py-1 px-2 ${view === 'tqqq' ? 'text-amber-400 font-bold' : 'text-gray-400'}`}>
+            <Icons.Lightning />
+            <span className="mt-1 text-[10px]">TQQQ 策略</span>
+          </button>
+          <button onClick={() => setView('portfolio')} className={`flex flex-col items-center py-1 px-2 ${view === 'portfolio' ? 'text-cyan-400 font-bold' : 'text-gray-400'}`}>
+            <Icons.List />
+            <span className="mt-1 text-[10px]">My Stock</span>
+          </button>
+          <button onClick={() => { resetForm(); setView('add'); }} className={`flex flex-col items-center py-1 px-2 ${view === 'add' ? 'text-cyan-400 font-bold' : 'text-gray-400'}`}>
+            <Icons.Plus />
+            <span className="mt-1 text-[10px]">Add Buy</span>
+          </button>
+          <button onClick={() => setView('search')} className={`flex flex-col items-center py-1 px-2 ${view === 'search' || view === 'settings' ? 'text-cyan-400 font-bold' : 'text-gray-400'}`}>
+            <Icons.Search />
+            <span className="mt-1 text-[10px]">Search/API</span>
+          </button>
+          <button onClick={() => setView('history')} className={`flex flex-col items-center py-1 px-2 ${view === 'history' || view === 'edit' ? 'text-cyan-400 font-bold' : 'text-gray-400'}`}>
+            <Icons.History />
+            <span className="mt-1 text-[10px]">History</span>
+          </button>
+        </div>
+      );
+
+      return (
+        <div className="flex flex-col h-full text-slate-100 select-none">
+          
+          {/* HEADER WITH CONDITIONAL TOP RIGHT ACCOUNT VALUE INPUT ONLY FOR TQQQ PAGE */}
+          <div className="pt-5 pb-3 px-4 flex items-center justify-between border-b border-gray-800 bg-[#1A1A24]/90 backdrop-blur sticky top-0 z-20">
+            <div className="flex items-center space-x-1.5">
+              <span className="text-amber-400 font-bold"><Icons.Lightning /></span>
+              <h1 className="text-sm font-extrabold text-white tracking-wide">US Stock & TQQQ</h1>
+            </div>
+
+            {/* Top Right Hand Corner: Display Account Value Input ONLY when view === 'tqqq' */}
+            {view === 'tqqq' ? (
+              <div className="flex items-center space-x-1.5 bg-gray-900/90 border border-amber-500/40 px-2.5 py-1 rounded-xl shadow-inner">
+                <span className="text-[10px] text-amber-400 font-bold">帳戶價值:</span>
+                <span className="text-xs text-amber-300 font-bold">$</span>
+                <input 
+                  type="number" 
+                  value={accountValue} 
+                  onChange={(e) => setAccountValue(e.target.value)}
+                  className="w-20 bg-transparent text-right text-xs font-extrabold text-white focus:outline-none"
+                />
+              </div>
+            ) : (
+              <button 
+                onClick={refreshPrices} 
+                disabled={loadingPrices}
+                className="p-1.5 rounded-full hover:bg-gray-800 text-cyan-400 transition flex items-center gap-1 text-xs"
+                title="Refresh Prices"
+              >
+                <Icons.Refresh />
+                <span className="hidden sm:inline">{loadingPrices ? 'Syncing...' : 'Sync'}</span>
+              </button>
+            )}
+          </div>
+
+          <div className="flex-1 overflow-y-auto no-scrollbar">
+
+            {/* PAGE: TQQQ STRATEGY */}
+            {view === 'tqqq' && (
+              <div className="p-4 space-y-4">
+                
+                {/* 1st Block: Buy-in Alert */}
+                <div className="bg-gray-900/80 border border-amber-500/30 rounded-2xl p-4 space-y-3 shadow-lg">
+                  <div className="flex justify-between items-center border-b border-gray-800 pb-2">
+                    <h2 className="text-sm font-bold text-amber-400 flex items-center gap-1.5">
+                      <span>1. Buy-in Alert (QQQ 歷史高位對比)</span>
+                    </h2>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${qqqDiffPct >= 0 ? 'bg-emerald-950 text-emerald-400' : 'bg-red-950 text-red-400'}`}>
+                      距高位: {formatPercent(qqqDiffPct)}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="bg-gray-950/70 p-2.5 rounded-xl border border-gray-800">
+                      <div className="text-[10px] text-gray-400">QQQ 歷史高位價格</div>
+                      <div className="flex items-center gap-1 mt-0.5">
+                        <span className="text-gray-400">$</span>
+                        <input 
+                          type="number" 
+                          value={qqqHistHigh} 
+                          onChange={(e) => setQqqHistHigh(e.target.value)}
+                          className="w-20 bg-gray-900 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-white font-bold"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="bg-gray-950/70 p-2.5 rounded-xl border border-gray-800">
+                      <div className="text-[10px] text-gray-400">高位出現日期</div>
+                      <input 
+                        type="date" 
+                        value={qqqHighDate} 
+                        onChange={(e) => setQqqHighDate(e.target.value)}
+                        className="w-full bg-gray-900 border border-gray-700 rounded px-1 py-0.5 text-[11px] text-white mt-0.5"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-between items-center bg-gray-950/90 p-2.5 rounded-xl border border-gray-800/80 text-xs">
+                    <span className="text-gray-400">QQQ 當前價: <strong className="text-white">{formatUSD(currentQqqPrice)}</strong></span>
+                    <span className="text-[11px] text-gray-300">相對高位價差: <strong className={qqqDiffPct >= 0 ? 'text-emerald-400' : 'text-red-400'}>{formatPercent(qqqDiffPct)}</strong></span>
+                  </div>
+
+                  <div className="p-2.5 bg-amber-950/30 border border-amber-800/40 rounded-xl text-xs text-amber-200 leading-relaxed font-medium">
+                    <div className="font-bold text-amber-300 mb-1 flex items-center gap-1">
+                      <Icons.Alert /> 買入提醒規則 (Buy-in Rules):
+                    </div>
+                    -12% buy in ½, -20% buy in remaining ½, -30% buy in all
+                  </div>
+                </div>
+
+                {/* 2nd Block: Combination */}
+                <div className="bg-gray-900/80 border border-blue-500/30 rounded-2xl p-4 space-y-3 shadow-lg">
+                  <div className="flex justify-between items-center border-b border-gray-800 pb-2">
+                    <h2 className="text-sm font-bold text-blue-400">2. Portfolio Combination (組合配置)</h2>
+                    <span className="text-[10px] text-cyan-400 font-bold bg-cyan-950 border border-cyan-800 px-2 py-0.5 rounded-full">
+                      再平衡提醒: TQQQ &ge; 65%
+                    </span>
+                  </div>
+
+                  <div className="space-y-2 text-xs">
+                    {/* TQQQ 50% & 65% */}
+                    <div className="bg-gray-950/80 p-3 rounded-xl border border-gray-800 space-y-1.5">
+                      <div className="flex justify-between items-center">
+                        <span className="font-bold text-amber-300 text-sm">TQQQ (50% 目標配置)</span>
+                        <span className="text-[11px] text-red-400 font-bold bg-red-950/80 border border-red-800/60 px-2 py-0.5 rounded-md">
+                          65% 警戒上限: {formatUSD(alloc65Tqqq)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-gray-300 text-[11px]">
+                        <span>預期金額: <strong className="text-white">{formatUSD(alloc50Tqqq)}</strong></span>
+                        <span>現價: <strong className="text-amber-300">{formatUSD(priceTqqq)}</strong></span>
+                        <span>預期股數: <strong className="text-cyan-300 font-bold">{qtyTqqq} 股</strong></span>
+                      </div>
+                    </div>
+
+                    {/* JEPQ 25% */}
+                    <div className="bg-gray-950/80 p-3 rounded-xl border border-gray-800 space-y-1.5">
+                      <div className="flex justify-between items-center">
+                        <span className="font-bold text-blue-300 text-sm">JEPQ (25% 目標配置)</span>
+                        <span className="text-[11px] text-gray-400">高股息套利</span>
+                      </div>
+                      <div className="flex justify-between text-gray-300 text-[11px]">
+                        <span>預期金額: <strong className="text-white">{formatUSD(alloc25Jepq)}</strong></span>
+                        <span>現價: <strong className="text-blue-300">{formatUSD(priceJepq)}</strong></span>
+                        <span>預期股數: <strong className="text-cyan-300 font-bold">{qtyJepq} 股</strong></span>
+                      </div>
+                    </div>
+
+                    {/* JAAA 25% */}
+                    <div className="bg-gray-950/80 p-3 rounded-xl border border-gray-800 space-y-1.5">
+                      <div className="flex justify-between items-center">
+                        <span className="font-bold text-purple-300 text-sm">JAAA (25% 目標配置)</span>
+                        <span className="text-[11px] text-gray-400">AAA 級債券避險</span>
+                      </div>
+                      <div className="flex justify-between text-gray-300 text-[11px]">
+                        <span>預期金額: <strong className="text-white">{formatUSD(alloc25Jaaa)}</strong></span>
+                        <span>現價: <strong className="text-purple-300">{formatUSD(priceJaaa)}</strong></span>
+                        <span>預期股數: <strong className="text-cyan-300 font-bold">{qtyJaaa} 股</strong></span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3rd Block: Index Hedging */}
+                <div className="bg-gray-900/80 border border-purple-500/30 rounded-2xl p-4 space-y-3 shadow-lg">
+                  <div className="flex justify-between items-center border-b border-gray-800 pb-2">
+                    <h2 className="text-sm font-bold text-purple-400">3. Index Hedging (指數對沖)</h2>
+                    <span className="text-[10px] text-purple-300 bg-purple-950 border border-purple-800 px-2 py-0.5 rounded-full">
+                      做空 MNQ 對沖
+                    </span>
+                  </div>
+
+                  <div className="space-y-2 text-xs">
+                    <div className="flex items-center justify-between bg-gray-950/80 p-2.5 rounded-xl border border-gray-800">
+                      <span className="text-gray-400">帳戶總體 Beta:</span>
+                      <input 
+                        type="number" 
+                        step="0.05"
+                        value={customBeta} 
+                        onChange={(e) => setCustomBeta(e.target.value)}
+                        className="w-20 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-right text-xs text-purple-300 font-bold"
+                      />
+                    </div>
+
+                    {/* Equation breakdown */}
+                    <div className="bg-gray-950/90 p-3 rounded-xl border border-purple-900/40 space-y-2">
+                      <div className="text-[11px] text-gray-300 font-mono">
+                        應對沖市值 = 帳戶價值 ({formatUSD(numAccountVal)}) &times; Beta ({numBeta})
+                      </div>
+                      <div className="text-sm font-extrabold text-purple-300">
+                        = {formatUSD(hedgeNotionalMarketVal)}
+                      </div>
+
+                      <hr className="border-gray-800" />
+
+                      <div className="text-[11px] text-gray-300 font-mono">
+                        應持有期貨合約數量 = 應對沖市值 ({formatUSD(hedgeNotionalMarketVal)}) / (MNQ現價 {formatUSD(priceMnq)} &times; 乘數 {multiplierMnq})
+                      </div>
+                      <div className="text-base font-black text-cyan-300">
+                        = {mnqContractsNeeded} 張 MNQ 期貨合約
+                      </div>
+                    </div>
+
+                    <div className="p-2.5 bg-purple-950/30 border border-purple-800/40 rounded-xl text-[11px] text-purple-200 leading-relaxed">
+                      • 避免長期熊市中 TQQQ 的災難性損失，做空納指期貨 MNQ 對沖風險
+                    </div>
+                  </div>
+                </div>
+
+                {/* 4th Block: Black Swan */}
+                <div className="bg-gray-900/80 border border-red-500/30 rounded-2xl p-4 space-y-3 shadow-lg">
+                  <div className="flex justify-between items-center border-b border-gray-800 pb-2">
+                    <h2 className="text-sm font-bold text-red-400">4. Black Swan Insurance (黑天鵝保險)</h2>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${isVixAlert ? 'bg-red-600 text-white animate-pulse' : 'bg-emerald-950 text-emerald-400'}`}>
+                      VIX: {numVix} {isVixAlert ? '🚨 觸發警報' : '正常'}
+                    </span>
+                  </div>
+
+                  <div className="space-y-2 text-xs">
+                    <div className="flex justify-between items-center bg-gray-950/80 p-2.5 rounded-xl border border-gray-800">
+                      <span className="text-gray-400">保險費預算 (2% 帳戶總額):</span>
+                      <span className="text-sm font-extrabold text-red-400">{formatUSD(blackSwanVal)}</span>
+                    </div>
+
+                    {isVixAlert && (
+                      <div className="p-2 bg-red-950/80 border border-red-800 text-red-200 rounded-xl text-[11px] font-bold flex items-center gap-1.5">
+                        <Icons.Alert />
+                        <span>VIX 目前為 {numVix} (超出的警戒區間: &lt;14 或 &gt;35)，請檢查執行條件！</span>
+                      </div>
+                    )}
+
+                    <div className="p-3 bg-red-950/20 border border-red-900/40 rounded-xl text-[11px] text-gray-300 space-y-1.5 leading-relaxed">
+                      <div>• <strong>黑天鵝保險費：</strong>看作常規支出，在市場暴跌行情中獲取現金加碼</div>
+                      <div>• <strong>觸發條件：</strong>VIX指數接近 12</div>
+                      <div>• <strong>執行方式：</strong>買入 DTE 一年 QQQ 看跌期權 (Put Option)，合約 Delta 介於 -0.10 ～ -0.15 之間</div>
+                      <div>• <strong>動態展期：</strong>當剩餘天數 (DTE) &lt; 180 天時，若 VIX 依然處於低位，平倉殘值並重新買入新的一年期合約</div>
+                      <div>• <strong>平倉兌現：</strong>VIX 突破 35 或合約價值增長 300% 時平倉，將獲取的現金用於下跌增持 TQQQ</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 5th Block: Word Box for Remarks */}
+                <div className="bg-gray-900/80 border border-gray-700 rounded-2xl p-4 space-y-2 shadow-lg">
+                  <h2 className="text-sm font-bold text-gray-200">5. 策略備忘與筆記 (Remarks / Notes)</h2>
+                  <textarea 
+                    rows="4" 
+                    placeholder="在此輸入個人的策略補充說明、動態調倉紀錄或交易備忘..." 
+                    value={tqqqNotes}
+                    onChange={(e) => setTqqqNotes(e.target.value)}
+                    className="w-full bg-gray-950 border border-gray-800 rounded-xl p-3 text-xs text-gray-200 focus:outline-none focus:border-amber-500 leading-relaxed resize-none"
+                  />
+                </div>
+
+              </div>
+            )}
+
+            {/* PAGE 2: MY STOCK LIST */}
+            {view === 'portfolio' && (
+              <div className="p-4 space-y-4">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <h2 className="text-base font-bold text-white">My Stock List</h2>
+                    <p className="text-xs text-gray-400">Total Market Value: <span className="text-cyan-400 font-bold">{formatUSD(totalPortfolioValue)}</span></p>
+                  </div>
+                  <span className="text-[10px] bg-cyan-950/80 text-cyan-400 border border-cyan-800/60 px-2 py-1 rounded-md">
+                    {portfolioData.length} Holdings
+                  </span>
+                </div>
+
+                {portfolioData.length === 0 ? (
+                  <div className="py-12 text-center text-gray-500 text-xs space-y-3">
+                    <Icons.List />
+                    <p>No holdings added yet. Click "+" to add your first buy-in record.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {portfolioData.map(item => {
+                      const lastDiffColor = item.lastDiffPct >= 0 ? 'text-emerald-400' : 'text-red-400';
+                      const avgDiffColor = item.avgDiffPct >= 0 ? 'text-emerald-400' : 'text-red-400';
+                      const yahooLink = `https://hk.finance.yahoo.com/quote/${item.symbol}/`;
+
+                      return (
+                        <div key={item.symbol} className="bg-gray-900/70 border border-gray-800 rounded-2xl p-4 space-y-3 shadow">
+                          <div className="flex justify-between items-start border-b border-gray-800/80 pb-2.5">
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-base font-extrabold text-white tracking-wider font-mono">{item.symbol}</span>
+                                <a href={yahooLink} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-cyan-400 transition" title="View on Yahoo Finance HK">
+                                  <Icons.ExternalLink />
+                                </a>
+                              </div>
+                              <div className="text-[10px] text-gray-400">
+                                {item.quote.source ? `Data via ${item.quote.source}` : 'Set Finnhub Key for Live Prices'}
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-xs text-gray-400">現價 (Current)</div>
+                              <div className="text-sm font-bold text-cyan-300">
+                                {item.currentPrice > 0 ? formatUSD(item.currentPrice) : 'N/A'}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2 text-xs">
+                            <div className="bg-gray-950/60 border border-gray-800/60 p-2 rounded-xl">
+                              <div className="text-[10px] text-gray-400">上次買入價</div>
+                              <div className="font-semibold text-gray-200 mt-0.5">{formatUSD(item.lastBuyPrice)}</div>
+                              <div className={`text-[10px] font-bold mt-1 ${lastDiffColor}`}>
+                                現價/上次價差: {formatPercent(item.lastDiffPct)}
+                              </div>
+                            </div>
+
+                            <div className="bg-gray-950/60 border border-gray-800/60 p-2 rounded-xl">
+                              <div className="text-[10px] text-gray-400">平均買入價</div>
+                              <div className="font-semibold text-gray-200 mt-0.5">{formatUSD(item.avgBuyPrice)}</div>
+                              <div className={`text-[10px] font-bold mt-1 ${avgDiffColor}`}>
+                                現價/平均價差: {formatPercent(item.avgDiffPct)}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex justify-between items-center text-xs pt-1 border-t border-gray-800/50">
+                            <div>
+                              <span className="text-gray-400">已有數量: </span>
+                              <span className="font-bold text-gray-200">{item.totalQty} 股</span>
+                            </div>
+                            <div>
+                              <span className="text-gray-400">總額: </span>
+                              <span className="font-bold text-cyan-400">{formatUSD(item.marketValue)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* PAGE 1: ADD / EDIT BUY RECORD */}
+            {(view === 'add' || view === 'edit') && (
+              <div className="p-5 space-y-5">
+                <div className="flex justify-between items-center border-b border-gray-800 pb-2">
+                  <h2 className="text-base font-bold text-cyan-400">{view === 'edit' ? 'Edit Buy-in Record' : 'Add Buy-in Record'}</h2>
+                  {view === 'edit' && (
+                    <button onClick={() => setView('history')} className="text-xs text-gray-400 flex items-center gap-1"><Icons.ChevronLeft /> Back</button>
+                  )}
+                </div>
+
+                <div className="space-y-4">
+                  <div className="space-y-1">
+                    <label className="text-xs text-gray-400 font-medium ml-1">Stock Ticker Symbol (e.g. INTC, MSFT, NVDA)</label>
+                    <input 
+                      type="text" 
+                      placeholder="INTC or MSFT" 
+                      value={formSymbol} 
+                      onChange={(e) => setFormSymbol(e.target.value)}
+                      className="w-full bg-gray-900/80 border border-gray-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-cyan-500 font-mono text-sm uppercase"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs text-gray-400 font-medium ml-1">Buy Date</label>
+                    <input 
+                      type="date" 
+                      value={formDate} 
+                      onChange={(e) => setFormDate(e.target.value)}
+                      className="w-full bg-gray-900/80 border border-gray-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-cyan-500 text-sm"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs text-gray-400 font-medium ml-1">Buy-in Stock Price (USD)</label>
+                    <div className="flex items-center bg-gray-900/80 border border-gray-800 rounded-xl px-4 py-3">
+                      <span className="text-sm font-bold mr-2 text-cyan-400">$</span>
+                      <input 
+                        type="number" 
+                        step="0.01" 
+                        placeholder="0.00" 
+                        value={formPrice} 
+                        onChange={(e) => setFormPrice(e.target.value)}
+                        className="bg-transparent flex-1 text-lg text-white focus:outline-none font-semibold"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs text-gray-400 font-medium ml-1">Quantity (Shares)</label>
+                    <input 
+                      type="number" 
+                      placeholder="e.g. 10" 
+                      value={formQty} 
+                      onChange={(e) => setFormQty(e.target.value)}
+                      className="w-full bg-gray-900/80 border border-gray-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-cyan-500 text-sm font-semibold"
+                    />
+                  </div>
+
+                  <div className="pt-2 flex gap-3">
+                    {view === 'edit' && (
+                      <button onClick={() => handleDeleteRecord(formId)} className="p-3 bg-red-900/30 text-red-400 border border-red-900 rounded-xl hover:bg-red-900/50 transition">
+                        <Icons.Trash />
+                      </button>
+                    )}
+                    <button 
+                      onClick={handleSaveRecord}
+                      className="flex-1 bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3.5 rounded-xl shadow-lg transition"
+                    >
+                      {view === 'edit' ? 'Update Buy Record' : 'Save Buy Record'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* PAGE 3: SEARCH & SETTINGS */}
+            {(view === 'search' || view === 'settings') && (
+              <div className="p-4 space-y-6">
+                <div className="space-y-3">
+                  <h2 className="text-base font-bold text-white">Stock Search</h2>
+                  <div className="flex gap-2">
+                    <input 
+                      type="text" 
+                      placeholder="e.g. INTC, MSFT, NVDA"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                      className="flex-1 bg-gray-900 border border-gray-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-cyan-500 uppercase"
+                    />
+                    <button 
+                      onClick={handleSearch}
+                      disabled={searchLoading}
+                      className="bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-center"
+                    >
+                      {searchLoading ? '...' : <Icons.Search />}
+                    </button>
+                  </div>
+
+                  {searchError && (
+                    <div className="p-3 bg-red-950/40 border border-red-800/50 text-red-300 rounded-xl text-xs leading-relaxed">
+                      {searchError}
+                    </div>
+                  )}
+
+                  {searchResult && (
+                    <div className="bg-gray-900/80 border border-gray-800 rounded-2xl p-4 space-y-3">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-base font-extrabold text-white">{searchResult.symbol}</span>
+                            <a href={`https://hk.finance.yahoo.com/quote/${searchResult.symbol}/`} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-cyan-400">
+                              <Icons.ExternalLink />
+                            </a>
+                          </div>
+                          <div className="text-xs text-gray-400">Source: {searchResult.source}</div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-lg font-bold text-cyan-300">{formatUSD(searchResult.price)}</div>
+                          <div className={`text-xs font-bold ${searchResult.changePercent >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                            {formatPercent(searchResult.changePercent)}
+                          </div>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={() => {
+                          setFormSymbol(searchResult.symbol);
+                          setFormPrice(searchResult.price);
+                          setView('add');
+                        }}
+                        className="w-full bg-cyan-900/40 border border-cyan-500/40 text-cyan-300 py-2 rounded-xl text-xs font-bold hover:bg-cyan-900/70 transition"
+                      >
+                        + Add Buy-in for {searchResult.symbol}
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <hr className="border-gray-800" />
+
+                <div className="space-y-4 bg-gray-900/60 border border-gray-800 rounded-2xl p-4">
+                  <h2 className="text-base font-bold text-white flex items-center gap-1.5">
+                    <Icons.Key />
+                    <span>Finnhub API Key Settings</span>
+                  </h2>
+                  <p className="text-xs text-gray-400 leading-relaxed">
+                    Paste your Finnhub API Key below to enable live price auto-refreshing across your stock portfolio & TQQQ strategy page:
+                  </p>
+
+                  <div className="space-y-1">
+                    <input 
+                      type="password" 
+                      placeholder="Paste Finnhub API Key" 
+                      value={finnhubApiKey}
+                      onChange={(e) => setFinnhubApiKey(e.target.value)}
+                      className="w-full bg-gray-950 text-white text-xs px-3 py-2.5 rounded-xl border border-gray-800 focus:outline-none focus:border-cyan-500 font-mono"
+                    />
+                    <div className="text-[10px] text-cyan-400 text-right">
+                      <a href="https://finnhub.io/register" target="_blank" rel="noopener noreferrer" className="underline">Get free Finnhub API key →</a>
+                    </div>
+                  </div>
+
+                  <hr className="border-gray-800/80" />
+
+                  <div className="space-y-2">
+                    <label className="text-xs text-gray-400">Target Portfolio Amount (USD)</label>
+                    <div className="flex items-center bg-gray-950 border border-gray-800 rounded-xl px-3 py-2">
+                      <span className="text-xs text-cyan-400 mr-1 font-bold">$</span>
+                      <input 
+                        type="number" 
+                        value={targetAmount} 
+                        onChange={(e) => setTargetAmount(e.target.value)}
+                        className="bg-transparent flex-1 text-sm text-white font-bold focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* PAGE 4: HISTORY */}
+            {view === 'history' && (
+              <div className="p-4 space-y-4">
+                <div className="flex justify-between items-center">
+                  <h2 className="text-base font-bold text-white">Buy History Records</h2>
+                  <span className="text-xs text-gray-400">{records.length} Total Records</span>
+                </div>
+
+                {records.length === 0 ? (
+                  <div className="py-12 text-center text-gray-500 text-xs space-y-3">
+                    <Icons.History />
+                    <p>No buy history recorded yet.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {records.sort((a,b) => new Date(b.date) - new Date(a.date)).map(r => (
+                      <div 
+                        key={r.id} 
+                        onClick={() => openEditRecord(r)}
+                        className="bg-gray-900/60 border border-gray-800 p-3.5 rounded-xl flex justify-between items-center cursor-pointer hover:bg-gray-800/60 transition"
+                      >
+                        <div className="space-y-0.5">
+                          <div className="text-sm font-extrabold text-cyan-300 font-mono">{r.symbol}</div>
+                          <div className="text-xs text-gray-400">{r.date} • {r.quantity} shares</div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-sm font-bold text-gray-200">{formatUSD(r.price)} / share</div>
+                          <div className="text-xs text-cyan-400 font-semibold">Total: {formatUSD(r.price * r.quantity)}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+          </div>
+
+          {renderBottomNav()}
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
