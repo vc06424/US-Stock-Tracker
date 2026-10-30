@@ -38,7 +38,9 @@
       History: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
       Refresh: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>,
       Trash: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>,
-      ChevronLeft: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+      ChevronLeft: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>,
+      ExternalLink: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>,
+      Key: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" /></svg>
     };
 
     const cleanSymbol = (input) => {
@@ -68,43 +70,84 @@
       return val >= 0 ? `+${formatted}` : formatted;
     };
 
-    // Yahoo Finance price fetcher using public chart proxies
-    const fetchYahooQuote = async (rawSymbol) => {
+    // Multi-source stock quote fetcher: Finnhub API (primary) + Yahoo HTML Scraper (fallback)
+    const fetchStockQuote = async (rawSymbol, apiKey = '') => {
       const symbol = cleanSymbol(rawSymbol);
       if (!symbol) return null;
 
-      const proxies = [
-        `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1m&range=1d`,
-        `https://corsproxy.io/?${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1m&range=1d`)}`
+      // 1. Finnhub API Strategy (Most Reliable for client-side CORS)
+      if (apiKey && apiKey.trim()) {
+        try {
+          const res = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(symbol)}&token=${encodeURIComponent(apiKey.trim())}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data && data.c > 0) {
+              const price = data.c;
+              const prevClose = data.pc;
+              const change = data.d || (price - prevClose);
+              const changePercent = data.dp || (prevClose ? (change / prevClose) * 100 : 0);
+              return {
+                symbol,
+                name: symbol,
+                price,
+                prevClose,
+                change,
+                changePercent,
+                source: 'Finnhub API'
+              };
+            }
+          }
+        } catch (e) {
+          console.warn(`Finnhub fetch failed for ${symbol}:`, e);
+        }
+      }
+
+      // 2. Direct Yahoo Finance Proxy / Scraper Strategy
+      const targetYahooUrl = `https://hk.finance.yahoo.com/quote/${symbol}/`;
+      const proxyUrls = [
+        `https://api.allorigins.win/get?url=${encodeURIComponent(targetYahooUrl)}`,
+        `https://corsproxy.io/?${encodeURIComponent(targetYahooUrl)}`
       ];
 
-      for (let url of proxies) {
+      for (let url of proxyUrls) {
         try {
           const res = await fetch(url);
           if (!res.ok) continue;
-          const data = await res.json();
-          const result = data?.chart?.result?.[0];
-          if (result && result.meta) {
-            const meta = result.meta;
-            const price = meta.regularMarketPrice;
-            const prevClose = meta.chartPreviousClose || meta.previousClose;
-            const change = price - prevClose;
-            const changePercent = prevClose ? (change / prevClose) * 100 : 0;
-            return {
-              symbol,
-              name: meta.shortName || meta.longName || symbol,
-              exchange: meta.exchangeName || 'US',
-              price,
-              prevClose,
-              change,
-              changePercent,
-              currency: meta.currency || 'USD'
-            };
+
+          let htmlText = '';
+          if (url.includes('allorigins')) {
+            const json = await res.json();
+            htmlText = json.contents || '';
+          } else {
+            htmlText = await res.text();
+          }
+
+          if (htmlText) {
+            // Regex match for price stream elements in Yahoo Finance HK page
+            const priceMatch = htmlText.match(/data-value="([0-9]+\.?[0-9]*)"[^>]*data-field="regularMarketPrice"/i) ||
+                               htmlText.match(/class="[^"]*livePrice[^"]*"[^>]*>([0-9]+\.?[0-9]*)</i) ||
+                               htmlText.match(/fin-streamer[^\>]*data-field="regularMarketPrice"[^\>]*value="([0-9]+\.?[0-9]*)"/i);
+
+            const changePctMatch = htmlText.match(/data-value="([-+]?[0-9]+\.?[0-9]*)"[^>]*data-field="regularMarketChangePercent"/i) ||
+                                   htmlText.match(/fin-streamer[^\>]*data-field="regularMarketChangePercent"[^\>]*value="([-+]?[0-9]+\.?[0-9]*)"/i);
+
+            if (priceMatch && priceMatch[1]) {
+              const price = parseFloat(priceMatch[1]);
+              const changePercent = changePctMatch && changePctMatch[1] ? parseFloat(changePctMatch[1]) : 0;
+              return {
+                symbol,
+                name: symbol,
+                price,
+                changePercent,
+                source: 'Yahoo Finance HK'
+              };
+            }
           }
         } catch (e) {
-          console.warn(`Proxy failed for ${symbol}:`, e);
+          console.warn(`Yahoo Proxy scraper failed for ${symbol}:`, e);
         }
       }
+
       return null;
     };
 
@@ -112,7 +155,7 @@
       // Navigation
       const [view, setView] = useState('portfolio'); // 'add', 'portfolio', 'search', 'settings', 'history', 'edit'
 
-      // Data Persistence
+      // Persistent Storage
       const [records, setRecords] = useState(() => {
         const saved = localStorage.getItem('st_records');
         return saved ? JSON.parse(saved) : [];
@@ -122,7 +165,11 @@
         return localStorage.getItem('st_target_amount') || '50000';
       });
 
-      // Prices Cache
+      const [finnhubApiKey, setFinnhubApiKey] = useState(() => {
+        return localStorage.getItem('st_finnhub_key') || '';
+      });
+
+      // Price Cache
       const [prices, setPrices] = useState({});
       const [loadingPrices, setLoadingPrices] = useState(false);
 
@@ -141,19 +188,20 @@
 
       useEffect(() => { localStorage.setItem('st_records', JSON.stringify(records)); }, [records]);
       useEffect(() => { localStorage.setItem('st_target_amount', targetAmount); }, [targetAmount]);
+      useEffect(() => { localStorage.setItem('st_finnhub_key', finnhubApiKey); }, [finnhubApiKey]);
 
       // Unique Stock Symbols
       const uniqueSymbols = useMemo(() => {
         return Array.from(new Set(records.map(r => cleanSymbol(r.symbol)))).filter(Boolean);
       }, [records]);
 
-      // Refresh Prices
+      // Refresh Prices Action
       const refreshPrices = async () => {
         if (uniqueSymbols.length === 0) return;
         setLoadingPrices(true);
         const newPrices = { ...prices };
         for (let sym of uniqueSymbols) {
-          const q = await fetchYahooQuote(sym);
+          const q = await fetchStockQuote(sym, finnhubApiKey);
           if (q) newPrices[sym] = q;
         }
         setPrices(newPrices);
@@ -162,7 +210,7 @@
 
       useEffect(() => {
         refreshPrices();
-      }, [uniqueSymbols.join(',')]);
+      }, [uniqueSymbols.join(','), finnhubApiKey]);
 
       // Aggregated Portfolio Data
       const portfolioData = useMemo(() => {
@@ -190,7 +238,6 @@
         });
 
         return Object.values(group).map(item => {
-          // Sort records by date ascending to find last buy
           const sortedRecs = [...item.records].sort((a,b) => new Date(a.date) - new Date(b.date));
           const lastRecord = sortedRecs[sortedRecs.length - 1] || {};
           
@@ -220,10 +267,10 @@
         return portfolioData.reduce((sum, item) => sum + item.marketValue, 0);
       }, [portfolioData]);
 
-      // Form Save Handler
+      // Form Handlers
       const handleSaveRecord = () => {
         const sym = cleanSymbol(formSymbol);
-        if (!sym) return alert('Please enter a valid stock ticker name.');
+        if (!sym) return alert('Please enter a valid stock ticker symbol.');
         if (!formPrice || Number(formPrice) <= 0) return alert('Please enter a valid buy-in price.');
         if (!formQty || Number(formQty) <= 0) return alert('Please enter a valid quantity.');
 
@@ -236,7 +283,6 @@
         };
 
         if (formId) {
-          setTransactions(prev => prev.map(r => r.id === formId ? newRecord : r)); // legacy compatibility
           setRecords(prev => prev.map(r => r.id === formId ? newRecord : r));
           setView('history');
         } else {
@@ -278,16 +324,16 @@
         setSearchError('');
         setSearchResult(null);
 
-        const res = await fetchYahooQuote(sym);
+        const res = await fetchStockQuote(sym, finnhubApiKey);
         if (res) {
           setSearchResult(res);
         } else {
-          setSearchError('Stock quote not found. Please verify ticker symbol (e.g. MSFT or NASDAQ:MSFT).');
+          setSearchError(`Unable to auto-fetch live quote for ${sym}. You can still add buy-in records manually or set a free Finnhub API Key below.`);
         }
         setSearchLoading(false);
       };
 
-      // Top Header
+      // Header
       const renderHeader = () => (
         <div className="pt-6 pb-3 px-4 flex items-center justify-between border-b border-gray-800 bg-[#1A1A24]/90 backdrop-blur sticky top-0 z-20">
           <div className="flex items-center space-x-2">
@@ -300,12 +346,12 @@
             title="Refresh Prices"
           >
             <Icons.Refresh />
-            <span className="hidden sm:inline">{loadingPrices ? 'Refreshing...' : 'Sync'}</span>
+            <span className="hidden sm:inline">{loadingPrices ? 'Syncing...' : 'Sync'}</span>
           </button>
         </div>
       );
 
-      // Bottom Navigation Bar
+      // Navigation Bar
       const renderBottomNav = () => (
         <div className="border-t border-gray-800 bg-[#161620] px-2 py-2 flex justify-around items-center sticky bottom-0 z-20 text-xs">
           <button onClick={() => setView('portfolio')} className={`flex flex-col items-center py-1 px-2 ${view === 'portfolio' ? 'text-cyan-400 font-bold' : 'text-gray-400'}`}>
@@ -318,7 +364,7 @@
           </button>
           <button onClick={() => setView('search')} className={`flex flex-col items-center py-1 px-2 ${view === 'search' || view === 'settings' ? 'text-cyan-400 font-bold' : 'text-gray-400'}`}>
             <Icons.Search />
-            <span className="mt-1 text-[10px]">Search/Target</span>
+            <span className="mt-1 text-[10px]">Search/API</span>
           </button>
           <button onClick={() => setView('history')} className={`flex flex-col items-center py-1 px-2 ${view === 'history' || view === 'edit' ? 'text-cyan-400 font-bold' : 'text-gray-400'}`}>
             <Icons.History />
@@ -333,7 +379,7 @@
 
           <div className="flex-1 overflow-y-auto no-scrollbar">
 
-            {/* PAGE 1: ADD BUY RECORD / EDIT */}
+            {/* PAGE 1: ADD / EDIT BUY RECORD */}
             {(view === 'add' || view === 'edit') && (
               <div className="p-5 space-y-5">
                 <div className="flex justify-between items-center border-b border-gray-800 pb-2">
@@ -345,10 +391,10 @@
 
                 <div className="space-y-4">
                   <div className="space-y-1">
-                    <label className="text-xs text-gray-400 font-medium ml-1">Stock Ticker (e.g. NASDAQ:MSFT or MSFT)</label>
+                    <label className="text-xs text-gray-400 font-medium ml-1">Stock Ticker Symbol (e.g. INTC, MSFT, NVDA)</label>
                     <input 
                       type="text" 
-                      placeholder="NASDAQ:MSFT or NVDA" 
+                      placeholder="INTC or NASDAQ:MSFT" 
                       value={formSymbol} 
                       onChange={(e) => setFormSymbol(e.target.value)}
                       className="w-full bg-gray-900/80 border border-gray-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-cyan-500 font-mono text-sm uppercase"
@@ -431,17 +477,33 @@
                     {portfolioData.map(item => {
                       const lastDiffColor = item.lastDiffPct >= 0 ? 'text-emerald-400' : 'text-red-400';
                       const avgDiffColor = item.avgDiffPct >= 0 ? 'text-emerald-400' : 'text-red-400';
+                      const yahooLink = `https://hk.finance.yahoo.com/quote/${item.symbol}/`;
 
                       return (
                         <div key={item.symbol} className="bg-gray-900/70 border border-gray-800 rounded-2xl p-4 space-y-3 shadow">
                           <div className="flex justify-between items-start border-b border-gray-800/80 pb-2.5">
                             <div>
-                              <span className="text-base font-extrabold text-white tracking-wider font-mono">{item.symbol}</span>
-                              <div className="text-[10px] text-gray-400 truncate max-w-[180px]">{item.quote.name || 'US Stock'}</div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-base font-extrabold text-white tracking-wider font-mono">{item.symbol}</span>
+                                <a 
+                                  href={yahooLink} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer" 
+                                  className="text-gray-400 hover:text-cyan-400 transition" 
+                                  title="View on Yahoo Finance HK"
+                                >
+                                  <Icons.ExternalLink />
+                                </a>
+                              </div>
+                              <div className="text-[10px] text-gray-400">
+                                {item.quote.source ? `Data via ${item.quote.source}` : 'Set Finnhub Key for Live Prices'}
+                              </div>
                             </div>
                             <div className="text-right">
                               <div className="text-xs text-gray-400">現價 (Current)</div>
-                              <div className="text-sm font-bold text-cyan-300">{formatUSD(item.currentPrice)}</div>
+                              <div className="text-sm font-bold text-cyan-300">
+                                {item.currentPrice > 0 ? formatUSD(item.currentPrice) : 'N/A'}
+                              </div>
                             </div>
                           </div>
 
@@ -481,7 +543,7 @@
               </div>
             )}
 
-            {/* PAGE 3: SEARCH & SETTINGS */}
+            {/* PAGE 3: SEARCH & API SETTINGS */}
             {(view === 'search' || view === 'settings') && (
               <div className="p-4 space-y-6">
                 {/* Search Section */}
@@ -490,7 +552,7 @@
                   <div className="flex gap-2">
                     <input 
                       type="text" 
-                      placeholder="Enter stock name e.g. NASDAQ:MSFT"
+                      placeholder="e.g. INTC, MSFT, NVDA"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
@@ -506,7 +568,7 @@
                   </div>
 
                   {searchError && (
-                    <div className="p-3 bg-red-950/40 border border-red-800/50 text-red-300 rounded-xl text-xs">
+                    <div className="p-3 bg-red-950/40 border border-red-800/50 text-red-300 rounded-xl text-xs leading-relaxed">
                       {searchError}
                     </div>
                   )}
@@ -515,12 +577,22 @@
                     <div className="bg-gray-900/80 border border-gray-800 rounded-2xl p-4 space-y-3">
                       <div className="flex justify-between items-start">
                         <div>
-                          <div className="text-base font-extrabold text-white">{searchResult.symbol}</div>
-                          <div className="text-xs text-gray-400">{searchResult.name} ({searchResult.exchange})</div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-base font-extrabold text-white">{searchResult.symbol}</span>
+                            <a 
+                              href={`https://hk.finance.yahoo.com/quote/${searchResult.symbol}/`} 
+                              target="_blank" 
+                              rel="noopener noreferrer" 
+                              className="text-gray-400 hover:text-cyan-400"
+                            >
+                              <Icons.ExternalLink />
+                            </a>
+                          </div>
+                          <div className="text-xs text-gray-400">Source: {searchResult.source}</div>
                         </div>
                         <div className="text-right">
                           <div className="text-lg font-bold text-cyan-300">{formatUSD(searchResult.price)}</div>
-                          <div className={`text-xs font-bold ${searchResult.change >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                          <div className={`text-xs font-bold ${searchResult.changePercent >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                             {formatPercent(searchResult.changePercent)}
                           </div>
                         </div>
@@ -541,11 +613,33 @@
 
                 <hr className="border-gray-800" />
 
-                {/* Target Amount & Progress Section */}
-                <div className="space-y-3 bg-gray-900/60 border border-gray-800 rounded-2xl p-4">
-                  <h2 className="text-base font-bold text-white">3. Settings & Target Portfolio</h2>
+                {/* API & Target Settings */}
+                <div className="space-y-4 bg-gray-900/60 border border-gray-800 rounded-2xl p-4">
+                  <h2 className="text-base font-bold text-white flex items-center gap-1.5">
+                    <Icons.Key />
+                    <span>Free Finnhub API Key (Recommended)</span>
+                  </h2>
+                  <p className="text-xs text-gray-400 leading-relaxed">
+                    Browsers block direct Yahoo Finance connections via CORS. For 100% stable, direct market prices on GitHub Pages, paste a free Finnhub API token below (60 calls/min free):
+                  </p>
+
+                  <div className="space-y-1">
+                    <input 
+                      type="password" 
+                      placeholder="Paste Finnhub API Key" 
+                      value={finnhubApiKey}
+                      onChange={(e) => setFinnhubApiKey(e.target.value)}
+                      className="w-full bg-gray-950 text-white text-xs px-3 py-2.5 rounded-xl border border-gray-800 focus:outline-none focus:border-cyan-500 font-mono"
+                    />
+                    <div className="text-[10px] text-cyan-400 text-right">
+                      <a href="https://finnhub.io/register" target="_blank" rel="noopener noreferrer" className="underline">Get free Finnhub API key →</a>
+                    </div>
+                  </div>
+
+                  <hr className="border-gray-800/80" />
+
                   <div className="space-y-2">
-                    <label className="text-xs text-gray-400">Input Target Portfolio Amount (USD)</label>
+                    <label className="text-xs text-gray-400">Target Portfolio Amount (USD)</label>
                     <div className="flex items-center bg-gray-950 border border-gray-800 rounded-xl px-3 py-2">
                       <span className="text-xs text-cyan-400 mr-1 font-bold">$</span>
                       <input 
@@ -557,11 +651,11 @@
                     </div>
                   </div>
 
-                  {/* Progress Display */}
+                  {/* Progress Bar */}
                   {Number(targetAmount) > 0 && (
-                    <div className="space-y-1.5 pt-2">
+                    <div className="space-y-1.5 pt-1">
                       <div className="flex justify-between text-xs">
-                        <span className="text-gray-400">Current Progress</span>
+                        <span className="text-gray-400">Target Progress</span>
                         <span className="font-bold text-cyan-400">
                           {((totalPortfolioValue / Number(targetAmount)) * 100).toFixed(1)}%
                         </span>
