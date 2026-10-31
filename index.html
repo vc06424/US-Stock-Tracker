@@ -42,7 +42,9 @@
       Key: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" /></svg>,
       Lightning: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>,
       Alert: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>,
-      Shield: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+      Shield: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>,
+      ChartPie: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z" /></svg>,
+      Filter: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" /></svg>
     };
 
     const cleanSymbol = (input) => {
@@ -114,10 +116,6 @@
         return saved ? JSON.parse(saved) : [];
       });
 
-      const [targetAmount, setTargetAmount] = useState(() => {
-        return localStorage.getItem('st_target_amount') || '50000';
-      });
-
       const [finnhubApiKey, setFinnhubApiKey] = useState(() => {
         return localStorage.getItem('st_finnhub_key') || '';
       });
@@ -164,13 +162,17 @@
       const [prices, setPrices] = useState({});
       const [loadingPrices, setLoadingPrices] = useState(false);
 
-      // Form State (Add / Edit)
+      // Form State (Add / Edit) - Expanded Categories: 'hi5', 'core_stocks', 'stock_list'
       const [formId, setFormId] = useState(null);
       const [formSymbol, setFormSymbol] = useState('');
       const [formDate, setFormDate] = useState(getTodayDate());
       const [formPrice, setFormPrice] = useState('');
       const [formQty, setFormQty] = useState('');
-      const [formCategory, setFormCategory] = useState('stock_list'); // 'stock_list' or 'core_stocks'
+      const [formCategory, setFormCategory] = useState('stock_list');
+
+      // History Filter State
+      const [historyCategoryFilter, setHistoryCategoryFilter] = useState('all'); // 'all', 'hi5', 'core_stocks', 'stock_list'
+      const [historySearchTerm, setHistorySearchTerm] = useState('');
 
       // Search State
       const [searchQuery, setSearchQuery] = useState('');
@@ -179,7 +181,6 @@
       const [searchError, setSearchError] = useState('');
 
       useEffect(() => { localStorage.setItem('st_records', JSON.stringify(records)); }, [records]);
-      useEffect(() => { localStorage.setItem('st_target_amount', targetAmount); }, [targetAmount]);
       useEffect(() => { localStorage.setItem('st_finnhub_key', finnhubApiKey); }, [finnhubApiKey]);
       useEffect(() => { localStorage.setItem('st_account_value', accountValue); }, [accountValue]);
       useEffect(() => { localStorage.setItem('st_qqq_hist_high', qqqHistHigh); }, [qqqHistHigh]);
@@ -214,13 +215,17 @@
         if (finnhubApiKey) refreshPrices();
       }, [allTrackedSymbols.join(','), finnhubApiKey]);
 
-      // Portfolio Aggregation for Stock List (general)
+      // Filtered records by category
       const stockListRecords = useMemo(() => {
         return records.filter(r => !r.category || r.category === 'stock_list');
       }, [records]);
 
       const coreStockRecords = useMemo(() => {
         return records.filter(r => r.category === 'core_stocks');
+      }, [records]);
+
+      const hi5Records = useMemo(() => {
+        return records.filter(r => r.category === 'hi5');
       }, [records]);
 
       const aggregateByRecords = (recList) => {
@@ -269,13 +274,41 @@
 
       const portfolioData = useMemo(() => aggregateByRecords(stockListRecords), [stockListRecords, prices]);
       const corePortfolioData = useMemo(() => aggregateByRecords(coreStockRecords), [coreStockRecords, prices]);
+      const hi5PortfolioData = useMemo(() => aggregateByRecords(hi5Records), [hi5Records, prices]);
 
-      const totalPortfolioValue = useMemo(() => {
-        return portfolioData.reduce((sum, item) => sum + item.marketValue, 0);
-      }, [portfolioData]);
+      // Category Market Values
+      const totalStockListVal = useMemo(() => portfolioData.reduce((sum, item) => sum + item.marketValue, 0), [portfolioData]);
+      const totalCoreVal = useMemo(() => corePortfolioData.reduce((sum, item) => sum + item.marketValue, 0), [corePortfolioData]);
+      const totalHi5Val = useMemo(() => hi5PortfolioData.reduce((sum, item) => sum + item.marketValue, 0), [hi5PortfolioData]);
+
+      // TQQQ Strategy Position Valuation
+      const numAccountVal = Number(accountValue) || 0;
+      const tqqqMarketVal = useMemo(() => {
+        // TQQQ 50% target allocation as baseline market valuation
+        return numAccountVal * 0.50;
+      }, [numAccountVal]);
+
+      // Grand Portfolio Summary (TQQQ + Hi5 + Core stocks + Stock list)
+      const grandTotalVal = tqqqMarketVal + totalHi5Val + totalCoreVal + totalStockListVal;
+
+      const portfolioSummary = useMemo(() => {
+        if (grandTotalVal === 0) {
+          return [
+            { label: 'TQQQ Strategy', val: tqqqMarketVal, pct: 0, color: 'text-amber-400', bg: 'bg-amber-500' },
+            { label: 'Hi5 ETFs', val: totalHi5Val, pct: 0, color: 'text-emerald-400', bg: 'bg-emerald-500' },
+            { label: 'Core Stocks', val: totalCoreVal, pct: 0, color: 'text-purple-400', bg: 'bg-purple-500' },
+            { label: 'Stock List', val: totalStockListVal, pct: 0, color: 'text-cyan-400', bg: 'bg-cyan-500' }
+          ];
+        }
+        return [
+          { label: 'TQQQ Strategy', val: tqqqMarketVal, pct: (tqqqMarketVal / grandTotalVal) * 100, color: 'text-amber-400', bg: 'bg-amber-500' },
+          { label: 'Hi5 ETFs', val: totalHi5Val, pct: (totalHi5Val / grandTotalVal) * 100, color: 'text-emerald-400', bg: 'bg-emerald-500' },
+          { label: 'Core Stocks', val: totalCoreVal, pct: (totalCoreVal / grandTotalVal) * 100, color: 'text-purple-400', bg: 'bg-purple-500' },
+          { label: 'Stock List', val: totalStockListVal, pct: (totalStockListVal / grandTotalVal) * 100, color: 'text-cyan-400', bg: 'bg-cyan-500' }
+        ];
+      }, [grandTotalVal, tqqqMarketVal, totalHi5Val, totalCoreVal, totalStockListVal]);
 
       // TQQQ Strategy Calculations
-      const numAccountVal = Number(accountValue) || 0;
       const numQqqHigh = Number(qqqHistHigh) || 1;
       const currentQqqPrice = prices['QQQ']?.price || numQqqHigh;
       const qqqDiffPct = numQqqHigh > 0 ? ((currentQqqPrice - numQqqHigh) / numQqqHigh) * 100 : 0;
@@ -312,6 +345,25 @@
       const rspChangePct = rspQuote.changePercent || 0;
       const isRspAlert = rspChangePct <= -1.0;
 
+      // Filtered History Records
+      const filteredHistoryRecords = useMemo(() => {
+        return records.filter(r => {
+          // Category match
+          const cat = r.category || 'stock_list';
+          if (historyCategoryFilter !== 'all' && cat !== historyCategoryFilter) {
+            return false;
+          }
+          // Stock symbol search match
+          if (historySearchTerm.trim()) {
+            const term = historySearchTerm.trim().toUpperCase();
+            if (!r.symbol.toUpperCase().includes(term)) {
+              return false;
+            }
+          }
+          return true;
+        }).sort((a,b) => new Date(b.date) - new Date(a.date));
+      }, [records, historyCategoryFilter, historySearchTerm]);
+
       // Handlers
       const handleSaveRecord = () => {
         const sym = cleanSymbol(formSymbol);
@@ -334,7 +386,11 @@
         } else {
           setRecords(prev => [newRecord, ...prev]);
           resetForm();
-          setView(formCategory === 'core_stocks' ? 'hi5_core' : 'portfolio');
+          if (formCategory === 'hi5' || formCategory === 'core_stocks') {
+            setView('hi5_core');
+          } else {
+            setView('portfolio');
+          }
         }
       };
 
@@ -435,7 +491,7 @@
           </button>
           <button onClick={() => setView('search')} className={`flex flex-col items-center py-1 px-1.5 ${view === 'search' || view === 'settings' ? 'text-cyan-400 font-bold' : 'text-gray-400'}`}>
             <Icons.Search />
-            <span className="mt-1 text-[9px]">Search/API</span>
+            <span className="mt-1 text-[9px]">Search/Summary</span>
           </button>
           <button onClick={() => setView('history')} className={`flex flex-col items-center py-1 px-1.5 ${view === 'history' || view === 'edit' ? 'text-cyan-400 font-bold' : 'text-gray-400'}`}>
             <Icons.History />
@@ -568,9 +624,9 @@
                 </div>
 
                 {/* 2nd Block: Core Stocks */}
-                <div className="bg-gray-900/80 border border-cyan-500/30 rounded-2xl p-4 space-y-3 shadow-lg">
+                <div className="bg-gray-900/80 border border-purple-500/30 rounded-2xl p-4 space-y-3 shadow-lg">
                   <div className="flex justify-between items-center border-b border-gray-800 pb-2">
-                    <h2 className="text-sm font-bold text-cyan-400 flex items-center gap-1.5">
+                    <h2 className="text-sm font-bold text-purple-400 flex items-center gap-1.5">
                       <Icons.List />
                       <span>2. Core Stocks (核心個股)</span>
                     </h2>
@@ -594,7 +650,7 @@
                                   updated[idx] = e.target.value.toUpperCase();
                                   setCoreTickers(updated);
                                 }}
-                                className="w-20 bg-gray-900 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-cyan-300 font-extrabold uppercase font-mono"
+                                className="w-20 bg-gray-900 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-purple-300 font-extrabold uppercase font-mono"
                               />
                             </div>
                             <div className="text-[11px] font-bold text-white">
@@ -615,7 +671,7 @@
                             </div>
                             <div className="text-right">
                               <span className="text-[9px] text-gray-400 block">總金額 (Total)</span>
-                              <span className="font-bold text-cyan-400">{formatUSD(data.totalAmount)}</span>
+                              <span className="font-bold text-purple-400">{formatUSD(data.totalAmount)}</span>
                             </div>
                           </div>
                         </div>
@@ -832,7 +888,7 @@
                 <div className="flex justify-between items-center">
                   <div>
                     <h2 className="text-base font-bold text-white">Stock List</h2>
-                    <p className="text-xs text-gray-400">Total Market Value: <span className="text-cyan-400 font-bold">{formatUSD(totalPortfolioValue)}</span></p>
+                    <p className="text-xs text-gray-400">Total Market Value: <span className="text-cyan-400 font-bold">{formatUSD(totalStockListVal)}</span></p>
                   </div>
                   <span className="text-[10px] bg-cyan-950/80 text-cyan-400 border border-cyan-800/60 px-2 py-1 rounded-md">
                     {portfolioData.length} Holdings
@@ -909,7 +965,7 @@
               </div>
             )}
 
-            {/* PAGE 1: ADD / EDIT BUY RECORD WITH CATEGORY CHOICE */}
+            {/* PAGE 1: ADD / EDIT BUY RECORD WITH 3 CATEGORIES (Hi5, Core stocks, stock list) */}
             {(view === 'add' || view === 'edit') && (
               <div className="p-5 space-y-5">
                 <div className="flex justify-between items-center border-b border-gray-800 pb-2">
@@ -920,14 +976,40 @@
                 </div>
 
                 <div className="space-y-4">
-                  {/* Category Selection */}
+                  {/* Category Selection: 3 Options */}
                   <div className="space-y-1">
                     <label className="text-xs text-gray-400 font-medium ml-1">Put in Portfolio Category (歸類至)</label>
-                    <div className="grid grid-cols-2 gap-2 pt-1">
+                    <div className="grid grid-cols-3 gap-1.5 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setFormCategory('hi5')}
+                        className={`py-2 px-2 rounded-xl border text-[11px] font-bold transition flex items-center justify-center gap-1 ${
+                          formCategory === 'hi5' 
+                            ? 'bg-emerald-950 border-emerald-500 text-emerald-300 shadow' 
+                            : 'bg-gray-900 border-gray-800 text-gray-400 hover:text-white'
+                        }`}
+                      >
+                        <Icons.Shield />
+                        <span>Hi5</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setFormCategory('core_stocks')}
+                        className={`py-2 px-2 rounded-xl border text-[11px] font-bold transition flex items-center justify-center gap-1 ${
+                          formCategory === 'core_stocks' 
+                            ? 'bg-purple-950 border-purple-500 text-purple-300 shadow' 
+                            : 'bg-gray-900 border-gray-800 text-gray-400 hover:text-white'
+                        }`}
+                      >
+                        <Icons.List />
+                        <span>Core</span>
+                      </button>
+
                       <button
                         type="button"
                         onClick={() => setFormCategory('stock_list')}
-                        className={`py-2.5 px-3 rounded-xl border text-xs font-bold transition flex items-center justify-center gap-1.5 ${
+                        className={`py-2 px-2 rounded-xl border text-[11px] font-bold transition flex items-center justify-center gap-1 ${
                           formCategory === 'stock_list' 
                             ? 'bg-cyan-950 border-cyan-500 text-cyan-300 shadow' 
                             : 'bg-gray-900 border-gray-800 text-gray-400 hover:text-white'
@@ -935,19 +1017,6 @@
                       >
                         <Icons.List />
                         <span>Stock List</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setFormCategory('core_stocks')}
-                        className={`py-2.5 px-3 rounded-xl border text-xs font-bold transition flex items-center justify-center gap-1.5 ${
-                          formCategory === 'core_stocks' 
-                            ? 'bg-emerald-950 border-emerald-500 text-emerald-300 shadow' 
-                            : 'bg-gray-900 border-gray-800 text-gray-400 hover:text-white'
-                        }`}
-                      >
-                        <Icons.Shield />
-                        <span>Core Stocks</span>
                       </button>
                     </div>
                   </div>
@@ -1016,9 +1085,51 @@
               </div>
             )}
 
-            {/* PAGE 3: SEARCH & SETTINGS */}
+            {/* PAGE 3: SEARCH / API & PORTFOLIO SUMMARY */}
             {(view === 'search' || view === 'settings') && (
               <div className="p-4 space-y-6">
+                
+                {/* Portfolio Summary Block (TQQQ + Hi5 + Core stocks + Stock list) */}
+                <div className="bg-gray-900/80 border border-amber-500/30 rounded-2xl p-4 space-y-3 shadow-lg">
+                  <div className="flex justify-between items-center border-b border-gray-800 pb-2">
+                    <h2 className="text-sm font-bold text-amber-400 flex items-center gap-1.5">
+                      <Icons.ChartPie />
+                      <span>Portfolio Summary (資產配置總覽)</span>
+                    </h2>
+                    <span className="text-xs font-mono font-bold text-white">
+                      Grand Total: {formatUSD(grandTotalVal)}
+                    </span>
+                  </div>
+
+                  {/* Multi-segment Progress Bar */}
+                  <div className="w-full bg-gray-950 h-3.5 rounded-full overflow-hidden flex border border-gray-800">
+                    {portfolioSummary.map((item, idx) => (
+                      <div 
+                        key={idx} 
+                        style={{ width: `${item.pct}%` }} 
+                        className={`h-full ${item.bg} transition-all duration-300`} 
+                        title={`${item.label}: ${item.pct.toFixed(1)}%`}
+                      />
+                    ))}
+                  </div>
+
+                  {/* Breakdown List with % */}
+                  <div className="grid grid-cols-2 gap-2 text-xs pt-1">
+                    {portfolioSummary.map((item, idx) => (
+                      <div key={idx} className="bg-gray-950/80 border border-gray-800/80 p-2.5 rounded-xl space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className={`font-bold text-[11px] ${item.color}`}>{item.label}</span>
+                          <span className="font-extrabold text-white text-[11px]">{item.pct.toFixed(1)}%</span>
+                        </div>
+                        <div className="text-[11px] text-gray-300 font-mono">
+                          {formatUSD(item.val)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Stock Search Block */}
                 <div className="space-y-3">
                   <h2 className="text-base font-bold text-white">Stock Search</h2>
                   <div className="flex gap-2">
@@ -1028,7 +1139,7 @@
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                      className="flex-1 bg-gray-900 border border-gray-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-cyan-500 uppercase"
+                      className="flex-1 bg-gray-900 border border-gray-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-cyan-500 uppercase font-mono"
                     />
                     <button 
                       onClick={handleSearch}
@@ -1050,7 +1161,7 @@
                       <div className="flex justify-between items-start">
                         <div>
                           <div className="flex items-center gap-2">
-                            <span className="text-base font-extrabold text-white">{searchResult.symbol}</span>
+                            <span className="text-base font-extrabold text-white font-mono">{searchResult.symbol}</span>
                             <a href={`https://hk.finance.yahoo.com/quote/${searchResult.symbol}/`} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-cyan-400">
                               <Icons.ExternalLink />
                             </a>
@@ -1080,6 +1191,7 @@
 
                 <hr className="border-gray-800" />
 
+                {/* Finnhub API Key Settings Only */}
                 <div className="space-y-4 bg-gray-900/60 border border-gray-800 rounded-2xl p-4">
                   <h2 className="text-base font-bold text-white flex items-center gap-1.5">
                     <Icons.Key />
@@ -1101,61 +1213,131 @@
                       <a href="https://finnhub.io/register" target="_blank" rel="noopener noreferrer" className="underline">Get free Finnhub API key →</a>
                     </div>
                   </div>
-
-                  <hr className="border-gray-800/80" />
-
-                  <div className="space-y-2">
-                    <label className="text-xs text-gray-400">Target Portfolio Amount (USD)</label>
-                    <div className="flex items-center bg-gray-950 border border-gray-800 rounded-xl px-3 py-2">
-                      <span className="text-xs text-cyan-400 mr-1 font-bold">$</span>
-                      <input 
-                        type="number" 
-                        value={targetAmount} 
-                        onChange={(e) => setTargetAmount(e.target.value)}
-                        className="bg-transparent flex-1 text-sm text-white font-bold focus:outline-none"
-                      />
-                    </div>
-                  </div>
                 </div>
               </div>
             )}
 
-            {/* PAGE 4: HISTORY */}
+            {/* PAGE 4: HISTORY (WITH CATEGORY SORT & STOCK NAME SEARCH) */}
             {view === 'history' && (
               <div className="p-4 space-y-4">
-                <div className="flex justify-between items-center">
+                <div className="flex justify-between items-center border-b border-gray-800 pb-2">
                   <h2 className="text-base font-bold text-white">Buy History Records</h2>
-                  <span className="text-xs text-gray-400">{records.length} Total Records</span>
+                  <span className="text-xs text-gray-400">{filteredHistoryRecords.length} / {records.length} Records</span>
                 </div>
 
-                {records.length === 0 ? (
+                {/* Filters: Category Selector & Stock Name Search */}
+                <div className="space-y-2 bg-gray-900/70 border border-gray-800 p-3 rounded-2xl">
+                  <div className="flex items-center gap-2">
+                    <input 
+                      type="text" 
+                      placeholder="Search stock name (e.g. AAPL, RSP)..." 
+                      value={historySearchTerm}
+                      onChange={(e) => setHistorySearchTerm(e.target.value)}
+                      className="flex-1 bg-gray-950 border border-gray-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500 font-mono uppercase"
+                    />
+                    {historySearchTerm && (
+                      <button 
+                        onClick={() => setHistorySearchTerm('')} 
+                        className="text-xs text-gray-400 hover:text-white px-1.5"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-1.5 pt-1 overflow-x-auto no-scrollbar">
+                    <span className="text-[10px] text-gray-400 flex items-center gap-1 mr-1">
+                      <Icons.Filter /> Cat:
+                    </span>
+                    
+                    <button
+                      onClick={() => setHistoryCategoryFilter('all')}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition whitespace-nowrap ${
+                        historyCategoryFilter === 'all'
+                          ? 'bg-cyan-600 text-white'
+                          : 'bg-gray-950 text-gray-400 border border-gray-800 hover:text-white'
+                      }`}
+                    >
+                      All ({records.length})
+                    </button>
+
+                    <button
+                      onClick={() => setHistoryCategoryFilter('hi5')}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition whitespace-nowrap ${
+                        historyCategoryFilter === 'hi5'
+                          ? 'bg-emerald-600 text-white'
+                          : 'bg-gray-950 text-gray-400 border border-gray-800 hover:text-white'
+                      }`}
+                    >
+                      Hi5 ({records.filter(r => r.category === 'hi5').length})
+                    </button>
+
+                    <button
+                      onClick={() => setHistoryCategoryFilter('core_stocks')}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition whitespace-nowrap ${
+                        historyCategoryFilter === 'core_stocks'
+                          ? 'bg-purple-600 text-white'
+                          : 'bg-gray-950 text-gray-400 border border-gray-800 hover:text-white'
+                      }`}
+                    >
+                      Core ({records.filter(r => r.category === 'core_stocks').length})
+                    </button>
+
+                    <button
+                      onClick={() => setHistoryCategoryFilter('stock_list')}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition whitespace-nowrap ${
+                        historyCategoryFilter === 'stock_list'
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-950 text-gray-400 border border-gray-800 hover:text-white'
+                      }`}
+                    >
+                      Stock List ({records.filter(r => !r.category || r.category === 'stock_list').length})
+                    </button>
+                  </div>
+                </div>
+
+                {filteredHistoryRecords.length === 0 ? (
                   <div className="py-12 text-center text-gray-500 text-xs space-y-3">
                     <Icons.History />
-                    <p>No buy history recorded yet.</p>
+                    <p>No buy history recorded matches your filter.</p>
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {records.sort((a,b) => new Date(b.date) - new Date(a.date)).map(r => (
-                      <div 
-                        key={r.id} 
-                        onClick={() => openEditRecord(r)}
-                        className="bg-gray-900/60 border border-gray-800 p-3.5 rounded-xl flex justify-between items-center cursor-pointer hover:bg-gray-800/60 transition"
-                      >
-                        <div className="space-y-0.5">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-sm font-extrabold text-cyan-300 font-mono">{r.symbol}</span>
-                            <span className={`text-[9px] px-1.5 py-0.2 rounded font-bold ${r.category === 'core_stocks' ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-gray-800 text-gray-400'}`}>
-                              {r.category === 'core_stocks' ? 'Core' : 'List'}
-                            </span>
+                    {filteredHistoryRecords.map(r => {
+                      const cat = r.category || 'stock_list';
+                      let badgeStyle = 'bg-gray-800 text-gray-400';
+                      let badgeText = 'List';
+
+                      if (cat === 'hi5') {
+                        badgeStyle = 'bg-emerald-950 text-emerald-400 border border-emerald-800';
+                        badgeText = 'Hi5';
+                      } else if (cat === 'core_stocks') {
+                        badgeStyle = 'bg-purple-950 text-purple-400 border border-purple-800';
+                        badgeText = 'Core';
+                      }
+
+                      return (
+                        <div 
+                          key={r.id} 
+                          onClick={() => openEditRecord(r)}
+                          className="bg-gray-900/60 border border-gray-800 p-3.5 rounded-xl flex justify-between items-center cursor-pointer hover:bg-gray-800/60 transition"
+                        >
+                          <div className="space-y-0.5">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-sm font-extrabold text-cyan-300 font-mono">{r.symbol}</span>
+                              <span className={`text-[9px] px-1.5 py-0.2 rounded font-bold ${badgeStyle}`}>
+                                {badgeText}
+                              </span>
+                            </div>
+                            <div className="text-xs text-gray-400">{r.date} • {r.quantity} shares</div>
                           </div>
-                          <div className="text-xs text-gray-400">{r.date} • {r.quantity} shares</div>
+                          <div className="text-right">
+                            <div className="text-sm font-bold text-gray-200">{formatUSD(r.price)} / share</div>
+                            <div className="text-xs text-cyan-400 font-semibold">Total: {formatUSD(r.price * r.quantity)}</div>
+                          </div>
                         </div>
-                        <div className="text-right">
-                          <div className="text-sm font-bold text-gray-200">{formatUSD(r.price)} / share</div>
-                          <div className="text-xs text-cyan-400 font-semibold">Total: {formatUSD(r.price * r.quantity)}</div>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
