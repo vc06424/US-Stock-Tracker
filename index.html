@@ -276,37 +276,63 @@
       const corePortfolioData = useMemo(() => aggregateByRecords(coreStockRecords), [coreStockRecords, prices]);
       const hi5PortfolioData = useMemo(() => aggregateByRecords(hi5Records), [hi5Records, prices]);
 
-      // Category Market Values
-      const totalStockListVal = useMemo(() => portfolioData.reduce((sum, item) => sum + item.marketValue, 0), [portfolioData]);
-      const totalCoreVal = useMemo(() => corePortfolioData.reduce((sum, item) => sum + item.marketValue, 0), [corePortfolioData]);
-      const totalHi5Val = useMemo(() => hi5PortfolioData.reduce((sum, item) => sum + item.marketValue, 0), [hi5PortfolioData]);
+      // Category Performance Metrics Helper (Market Value, Cost, Return %)
+      const getCategoryMetrics = (dataItems) => {
+        let marketVal = 0;
+        let totalCost = 0;
+        dataItems.forEach(item => {
+          marketVal += item.marketValue;
+          totalCost += item.totalCost;
+        });
+        const perfPct = totalCost > 0 && marketVal > 0 ? ((marketVal - totalCost) / totalCost) * 100 : 0;
+        return { marketVal, totalCost, perfPct };
+      };
 
-      // TQQQ Strategy Position Valuation
-      const numAccountVal = Number(accountValue) || 0;
-      const tqqqMarketVal = useMemo(() => {
-        // TQQQ 50% target allocation as baseline market valuation
-        return numAccountVal * 0.50;
-      }, [numAccountVal]);
+      // Helper for Watchlist Tickers (Hi5 5 rows & Core 3 rows) Aggregated Performance
+      const getWatchlistMetrics = (tickerList) => {
+        let marketVal = 0;
+        let totalCost = 0;
+        tickerList.forEach(ticker => {
+          const sym = cleanSymbol(ticker);
+          const tickerRecs = records.filter(r => cleanSymbol(r.symbol) === sym);
+          tickerRecs.forEach(r => {
+            const qty = Number(r.quantity) || 0;
+            const price = Number(r.price) || 0;
+            const curPrice = prices[sym]?.price || price;
+            totalCost += qty * price;
+            marketVal += qty * curPrice;
+          });
+        });
+        const perfPct = totalCost > 0 && marketVal > 0 ? ((marketVal - totalCost) / totalCost) * 100 : 0;
+        return { marketVal, totalCost, perfPct };
+      };
+
+      const stockListMetrics = useMemo(() => getCategoryMetrics(portfolioData), [portfolioData]);
+      const hi5Metrics = useMemo(() => getWatchlistMetrics(hi5Tickers), [hi5Tickers, records, prices]);
+      const coreMetrics = useMemo(() => getWatchlistMetrics(coreTickers), [coreTickers, records, prices]);
+
+      // TQQQ Strategy Valuation: exact equal to 帳戶價值 (accountValue)
+      const tqqqAccountVal = Number(accountValue) || 0;
 
       // Grand Portfolio Summary (TQQQ + Hi5 + Core stocks + Stock list)
-      const grandTotalVal = tqqqMarketVal + totalHi5Val + totalCoreVal + totalStockListVal;
+      const grandTotalVal = tqqqAccountVal + hi5Metrics.marketVal + coreMetrics.marketVal + stockListMetrics.marketVal;
 
       const portfolioSummary = useMemo(() => {
         if (grandTotalVal === 0) {
           return [
-            { label: 'TQQQ Strategy', val: tqqqMarketVal, pct: 0, color: 'text-amber-400', bg: 'bg-amber-500' },
-            { label: 'Hi5 ETFs', val: totalHi5Val, pct: 0, color: 'text-emerald-400', bg: 'bg-emerald-500' },
-            { label: 'Core Stocks', val: totalCoreVal, pct: 0, color: 'text-purple-400', bg: 'bg-purple-500' },
-            { label: 'Stock List', val: totalStockListVal, pct: 0, color: 'text-cyan-400', bg: 'bg-cyan-500' }
+            { label: 'TQQQ Strategy', val: tqqqAccountVal, pct: 0, perf: null, color: 'text-amber-400', bg: 'bg-amber-500' },
+            { label: 'Hi5 ETFs', val: hi5Metrics.marketVal, pct: 0, perf: hi5Metrics.perfPct, color: 'text-emerald-400', bg: 'bg-emerald-500' },
+            { label: 'Core Stocks', val: coreMetrics.marketVal, pct: 0, perf: coreMetrics.perfPct, color: 'text-purple-400', bg: 'bg-purple-500' },
+            { label: 'Stock List', val: stockListMetrics.marketVal, pct: 0, perf: stockListMetrics.perfPct, color: 'text-cyan-400', bg: 'bg-cyan-500' }
           ];
         }
         return [
-          { label: 'TQQQ Strategy', val: tqqqMarketVal, pct: (tqqqMarketVal / grandTotalVal) * 100, color: 'text-amber-400', bg: 'bg-amber-500' },
-          { label: 'Hi5 ETFs', val: totalHi5Val, pct: (totalHi5Val / grandTotalVal) * 100, color: 'text-emerald-400', bg: 'bg-emerald-500' },
-          { label: 'Core Stocks', val: totalCoreVal, pct: (totalCoreVal / grandTotalVal) * 100, color: 'text-purple-400', bg: 'bg-purple-500' },
-          { label: 'Stock List', val: totalStockListVal, pct: (totalStockListVal / grandTotalVal) * 100, color: 'text-cyan-400', bg: 'bg-cyan-500' }
+          { label: 'TQQQ Strategy', val: tqqqAccountVal, pct: (tqqqAccountVal / grandTotalVal) * 100, perf: null, color: 'text-amber-400', bg: 'bg-amber-500' },
+          { label: 'Hi5 ETFs', val: hi5Metrics.marketVal, pct: (hi5Metrics.marketVal / grandTotalVal) * 100, perf: hi5Metrics.perfPct, color: 'text-emerald-400', bg: 'bg-emerald-500' },
+          { label: 'Core Stocks', val: coreMetrics.marketVal, pct: (coreMetrics.marketVal / grandTotalVal) * 100, perf: coreMetrics.perfPct, color: 'text-purple-400', bg: 'bg-purple-500' },
+          { label: 'Stock List', val: stockListMetrics.marketVal, pct: (stockListMetrics.marketVal / grandTotalVal) * 100, perf: stockListMetrics.perfPct, color: 'text-cyan-400', bg: 'bg-cyan-500' }
         ];
-      }, [grandTotalVal, tqqqMarketVal, totalHi5Val, totalCoreVal, totalStockListVal]);
+      }, [grandTotalVal, tqqqAccountVal, hi5Metrics, coreMetrics, stockListMetrics]);
 
       // TQQQ Strategy Calculations
       const numQqqHigh = Number(qqqHistHigh) || 1;
@@ -314,10 +340,10 @@
       const qqqDiffPct = numQqqHigh > 0 ? ((currentQqqPrice - numQqqHigh) / numQqqHigh) * 100 : 0;
 
       // Combination Allocation
-      const alloc50Tqqq = numAccountVal * 0.50;
-      const alloc65Tqqq = numAccountVal * 0.65;
-      const alloc25Jepq = numAccountVal * 0.25;
-      const alloc25Jaaa = numAccountVal * 0.25;
+      const alloc50Tqqq = tqqqAccountVal * 0.50;
+      const alloc65Tqqq = tqqqAccountVal * 0.65;
+      const alloc25Jepq = tqqqAccountVal * 0.25;
+      const alloc25Jaaa = tqqqAccountVal * 0.25;
 
       const priceTqqq = prices['TQQQ']?.price || 70.0;
       const priceJepq = prices['JEPQ']?.price || 55.0;
@@ -329,7 +355,7 @@
 
       // Index Hedging
       const numBeta = Number(customBeta) || 1.8;
-      const hedgeNotionalMarketVal = numAccountVal * numBeta; 
+      const hedgeNotionalMarketVal = tqqqAccountVal * numBeta; 
       const priceMnq = prices['MNQ']?.price || prices['QQQ']?.price * 40 || 20000;
       const multiplierMnq = Number(mnqContractMultiplier) || 2;
       const singleMnqVal = priceMnq * multiplierMnq; 
@@ -338,7 +364,7 @@
       // Black Swan Insurance
       const numVix = prices['VIX']?.price || Number(vixValue) || 13.5;
       const isVixAlert = numVix < 14 || numVix > 35;
-      const blackSwanVal = numAccountVal * 0.02;
+      const blackSwanVal = tqqqAccountVal * 0.02;
 
       // RSP Data
       const rspQuote = prices['RSP'] || {};
@@ -348,12 +374,10 @@
       // Filtered History Records
       const filteredHistoryRecords = useMemo(() => {
         return records.filter(r => {
-          // Category match
           const cat = r.category || 'stock_list';
           if (historyCategoryFilter !== 'all' && cat !== historyCategoryFilter) {
             return false;
           }
-          // Stock symbol search match
           if (historySearchTerm.trim()) {
             const term = historySearchTerm.trim().toUpperCase();
             if (!r.symbol.toUpperCase().includes(term)) {
@@ -470,6 +494,72 @@
         };
       };
 
+      // Header Top Right Widget based on view
+      const renderHeaderRightWidget = () => {
+        if (view === 'tqqq') {
+          return (
+            <div className="flex items-center space-x-1.5 bg-gray-900/90 border border-amber-500/40 px-2 py-0.5 rounded-xl shadow-inner">
+              <span className="text-[10px] text-amber-400 font-bold">帳戶價值:</span>
+              <span className="text-xs text-amber-300 font-bold">$</span>
+              <input 
+                type="number" 
+                value={accountValue} 
+                onChange={(e) => setAccountValue(e.target.value)}
+                className="w-16 bg-transparent text-right text-xs font-extrabold text-white focus:outline-none"
+              />
+            </div>
+          );
+        }
+
+        if (view === 'hi5_core') {
+          const totalVal = hi5Metrics.marketVal + coreMetrics.marketVal;
+          let totalCost = hi5Metrics.totalCost + coreMetrics.totalCost;
+          const overallPerfPct = totalCost > 0 && totalVal > 0 ? ((totalVal - totalCost) / totalCost) * 100 : 0;
+          const perfColor = overallPerfPct >= 0 ? 'text-emerald-400' : 'text-red-400';
+
+          return (
+            <div className="flex items-center space-x-2 bg-gray-900/90 border border-emerald-500/40 px-2.5 py-1 rounded-xl shadow-inner text-right">
+              <div>
+                <div className="text-[9px] text-gray-400 leading-tight">Hi5+Core 總額</div>
+                <div className="text-[11px] font-extrabold text-white">{formatUSD(totalVal)}</div>
+              </div>
+              <div className="border-l border-gray-700 pl-1.5">
+                <div className="text-[9px] text-gray-400 leading-tight">報酬率</div>
+                <div className={`text-[11px] font-black ${perfColor}`}>{formatPercent(overallPerfPct)}</div>
+              </div>
+            </div>
+          );
+        }
+
+        if (view === 'portfolio') {
+          const perfColor = stockListMetrics.perfPct >= 0 ? 'text-emerald-400' : 'text-red-400';
+          return (
+            <div className="flex items-center space-x-2 bg-gray-900/90 border border-cyan-500/40 px-2.5 py-1 rounded-xl shadow-inner text-right">
+              <div>
+                <div className="text-[9px] text-gray-400 leading-tight">Stock List 總額</div>
+                <div className="text-[11px] font-extrabold text-white">{formatUSD(stockListMetrics.marketVal)}</div>
+              </div>
+              <div className="border-l border-gray-700 pl-1.5">
+                <div className="text-[9px] text-gray-400 leading-tight">報酬率</div>
+                <div className={`text-[11px] font-black ${perfColor}`}>{formatPercent(stockListMetrics.perfPct)}</div>
+              </div>
+            </div>
+          );
+        }
+
+        return (
+          <button 
+            onClick={refreshPrices} 
+            disabled={loadingPrices}
+            className="p-1.5 rounded-full hover:bg-gray-800 text-cyan-400 transition flex items-center gap-1 text-xs"
+            title="Refresh Prices"
+          >
+            <Icons.Refresh />
+            <span className="hidden sm:inline">{loadingPrices ? 'Syncing...' : 'Sync'}</span>
+          </button>
+        );
+      };
+
       // Navigation Bar
       const renderBottomNav = () => (
         <div className="border-t border-gray-800 bg-[#161620] px-1 py-2 flex justify-around items-center sticky bottom-0 z-20 text-xs">
@@ -503,36 +593,14 @@
       return (
         <div className="flex flex-col h-full text-slate-100 select-none">
           
-          {/* HEADER WITH CONDITIONAL TOP RIGHT ACCOUNT VALUE INPUT ONLY FOR TQQQ PAGE */}
+          {/* DYNAMIC HEADER TOP RIGHT CORNER WIDGET */}
           <div className="pt-5 pb-3 px-4 flex items-center justify-between border-b border-gray-800 bg-[#1A1A24]/90 backdrop-blur sticky top-0 z-20">
             <div className="flex items-center space-x-1.5">
               <span className="text-amber-400 font-bold"><Icons.Lightning /></span>
               <h1 className="text-sm font-extrabold text-white tracking-wide">US Stock & TQQQ</h1>
             </div>
 
-            {/* Top Right Hand Corner: Display Account Value Input ONLY when view === 'tqqq' */}
-            {view === 'tqqq' ? (
-              <div className="flex items-center space-x-1.5 bg-gray-900/90 border border-amber-500/40 px-2.5 py-1 rounded-xl shadow-inner">
-                <span className="text-[10px] text-amber-400 font-bold">帳戶價值:</span>
-                <span className="text-xs text-amber-300 font-bold">$</span>
-                <input 
-                  type="number" 
-                  value={accountValue} 
-                  onChange={(e) => setAccountValue(e.target.value)}
-                  className="w-20 bg-transparent text-right text-xs font-extrabold text-white focus:outline-none"
-                />
-              </div>
-            ) : (
-              <button 
-                onClick={refreshPrices} 
-                disabled={loadingPrices}
-                className="p-1.5 rounded-full hover:bg-gray-800 text-cyan-400 transition flex items-center gap-1 text-xs"
-                title="Refresh Prices"
-              >
-                <Icons.Refresh />
-                <span className="hidden sm:inline">{loadingPrices ? 'Syncing...' : 'Sync'}</span>
-              </button>
-            )}
+            {renderHeaderRightWidget()}
           </div>
 
           <div className="flex-1 overflow-y-auto no-scrollbar">
@@ -548,7 +616,12 @@
                       <Icons.Shield />
                       <span>1. Hi5 ETFs</span>
                     </h2>
-                    <span className="text-[10px] text-gray-400">5 ETF Watchlist</span>
+                    <div className="text-right">
+                      <span className="text-[10px] text-gray-400 font-bold mr-2">總額: {formatUSD(hi5Metrics.marketVal)}</span>
+                      <span className={`text-[10px] font-black px-1.5 py-0.5 rounded ${hi5Metrics.perfPct >= 0 ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-red-950 text-red-400 border border-red-800'}`}>
+                        {formatPercent(hi5Metrics.perfPct)}
+                      </span>
+                    </div>
                   </div>
 
                   {/* RSP Daily Change & Alert */}
@@ -630,7 +703,12 @@
                       <Icons.List />
                       <span>2. Core Stocks (核心個股)</span>
                     </h2>
-                    <span className="text-[10px] text-gray-400">3 Stock Watchlist</span>
+                    <div className="text-right">
+                      <span className="text-[10px] text-gray-400 font-bold mr-2">總額: {formatUSD(coreMetrics.marketVal)}</span>
+                      <span className={`text-[10px] font-black px-1.5 py-0.5 rounded ${coreMetrics.perfPct >= 0 ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-red-950 text-red-400 border border-red-800'}`}>
+                        {formatPercent(coreMetrics.perfPct)}
+                      </span>
+                    </div>
                   </div>
 
                   <div className="space-y-2">
@@ -813,7 +891,7 @@
                     {/* Equation breakdown */}
                     <div className="bg-gray-950/90 p-3 rounded-xl border border-purple-900/40 space-y-2">
                       <div className="text-[11px] text-gray-300 font-mono">
-                        應對沖市值 = 帳戶價值 ({formatUSD(numAccountVal)}) &times; Beta ({numBeta})
+                        應對沖市值 = 帳戶價值 ({formatUSD(tqqqAccountVal)}) &times; Beta ({numBeta})
                       </div>
                       <div className="text-sm font-extrabold text-purple-300">
                         = {formatUSD(hedgeNotionalMarketVal)}
@@ -888,11 +966,16 @@
                 <div className="flex justify-between items-center">
                   <div>
                     <h2 className="text-base font-bold text-white">Stock List</h2>
-                    <p className="text-xs text-gray-400">Total Market Value: <span className="text-cyan-400 font-bold">{formatUSD(totalStockListVal)}</span></p>
+                    <p className="text-xs text-gray-400">Total Market Value: <span className="text-cyan-400 font-bold">{formatUSD(stockListMetrics.marketVal)}</span></p>
                   </div>
-                  <span className="text-[10px] bg-cyan-950/80 text-cyan-400 border border-cyan-800/60 px-2 py-1 rounded-md">
-                    {portfolioData.length} Holdings
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-black text-cyan-400">
+                      {formatUSD(stockListMetrics.marketVal)}
+                    </span>
+                    <span className={`text-[10px] font-black px-2 py-0.5 rounded-md ${stockListMetrics.perfPct >= 0 ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-red-950 text-red-400 border border-red-800'}`}>
+                      {formatPercent(stockListMetrics.perfPct)}
+                    </span>
+                  </div>
                 </div>
 
                 {portfolioData.length === 0 ? (
@@ -1113,19 +1196,29 @@
                     ))}
                   </div>
 
-                  {/* Breakdown List with % */}
+                  {/* Breakdown List with Asset Weight % & Return Performance % */}
                   <div className="grid grid-cols-2 gap-2 text-xs pt-1">
-                    {portfolioSummary.map((item, idx) => (
-                      <div key={idx} className="bg-gray-950/80 border border-gray-800/80 p-2.5 rounded-xl space-y-1">
-                        <div className="flex items-center justify-between">
-                          <span className={`font-bold text-[11px] ${item.color}`}>{item.label}</span>
-                          <span className="font-extrabold text-white text-[11px]">{item.pct.toFixed(1)}%</span>
+                    {portfolioSummary.map((item, idx) => {
+                      const hasPerf = item.perf !== null && item.perf !== undefined;
+                      const perfColor = hasPerf ? (item.perf >= 0 ? 'text-emerald-400' : 'text-red-400') : '';
+
+                      return (
+                        <div key={idx} className="bg-gray-950/80 border border-gray-800/80 p-2.5 rounded-xl space-y-1">
+                          <div className="flex items-center justify-between">
+                            <span className={`font-bold text-[11px] ${item.color}`}>{item.label}</span>
+                            <span className="font-extrabold text-white text-[11px]">{item.pct.toFixed(1)}%</span>
+                          </div>
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-gray-300 font-mono">{formatUSD(item.val)}</span>
+                            {hasPerf && (
+                              <span className={`font-bold text-[10px] ${perfColor}`}>
+                                {formatPercent(item.perf)}
+                              </span>
+                            )}
+                          </div>
                         </div>
-                        <div className="text-[11px] text-gray-300 font-mono">
-                          {formatUSD(item.val)}
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
 
