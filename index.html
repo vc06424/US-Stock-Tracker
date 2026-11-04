@@ -75,11 +75,10 @@
       return val >= 0 ? `+${formatted}` : formatted;
     };
 
-    // Dedicated VIX Multi-Source Fetcher (Finnhub -> Yahoo Finance -> AllOrigins CORS Proxy)
+    // Robust Multi-Source VIX Quote Engine
     const fetchVixQuote = async (apiKey = '') => {
-      // Step A: Finnhub Index Queries (if key provided)
       if (apiKey && apiKey.trim()) {
-        const vixSymbols = ['^VIX', 'VIX'];
+        const vixSymbols = ['^VIX', 'VIX', 'INDEX:VIX'];
         for (const sym of vixSymbols) {
           try {
             const res = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(sym)}&token=${encodeURIComponent(apiKey.trim())}`);
@@ -98,17 +97,15 @@
                   open: data.o || price,
                   change,
                   changePercent: data.dp || (prevClose ? (change / prevClose) * 100 : 0),
-                  source: 'Finnhub API'
+                  source: 'Finnhub'
                 };
               }
             }
-          } catch (e) {
-            console.warn(`Finnhub VIX fetch failed for ${sym}:`, e);
-          }
+          } catch (e) {}
         }
       }
 
-      // Step B: Direct Yahoo Finance Query
+      // Yahoo Finance direct calls
       const yahooUrls = [
         'https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=1d&range=1d',
         'https://query2.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=1d&range=1d'
@@ -132,14 +129,14 @@
                 open: result?.meta?.regularMarketOpen || price,
                 change,
                 changePercent: prevClose ? (change / prevClose) * 100 : 0,
-                source: 'Yahoo Finance'
+                source: 'Yahoo Live'
               };
             }
           }
         } catch (e) {}
       }
 
-      // Step C: Public CORS Proxy Fallback
+      // CORS proxy fallback
       try {
         const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent('https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=1d&range=1d')}`;
         const res = await fetch(proxyUrl);
@@ -168,6 +165,67 @@
       return null;
     };
 
+    // Yahoo Stock/Futures Fetcher (Used for MNQ=F, TQQQ, JEPQ, JAAA fallback)
+    const fetchYahooSymbolQuote = async (rawSymbol) => {
+      const sym = cleanSymbol(rawSymbol);
+      if (!sym) return null;
+      let targetSym = sym;
+      if (sym === 'MNQ') targetSym = 'MNQ=F';
+      
+      const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(targetSym)}?interval=1d&range=1d`;
+      try {
+        const res = await fetch(yahooUrl);
+        if (res.ok) {
+          const data = await res.json();
+          const result = data?.chart?.result?.[0];
+          const price = result?.meta?.regularMarketPrice || result?.meta?.chartPreviousClose;
+          const prevClose = result?.meta?.previousClose || result?.meta?.chartPreviousClose || price;
+          if (price > 0) {
+            const change = price - prevClose;
+            return {
+              symbol: sym,
+              price,
+              prevClose,
+              high: result?.meta?.dayHigh || price,
+              low: result?.meta?.dayLow || price,
+              open: result?.meta?.regularMarketOpen || price,
+              change,
+              changePercent: prevClose ? (change / prevClose) * 100 : 0,
+              source: 'Yahoo Finance'
+            };
+          }
+        }
+      } catch (e) {}
+
+      // Proxy fallback for futures/stocks
+      try {
+        const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`;
+        const res = await fetch(proxyUrl);
+        if (res.ok) {
+          const data = await res.json();
+          const result = data?.chart?.result?.[0];
+          const price = result?.meta?.regularMarketPrice || result?.meta?.chartPreviousClose;
+          const prevClose = result?.meta?.previousClose || result?.meta?.chartPreviousClose || price;
+          if (price > 0) {
+            const change = price - prevClose;
+            return {
+              symbol: sym,
+              price,
+              prevClose,
+              high: result?.meta?.dayHigh || price,
+              low: result?.meta?.dayLow || price,
+              open: result?.meta?.regularMarketOpen || price,
+              change,
+              changePercent: prevClose ? (change / prevClose) * 100 : 0,
+              source: 'Yahoo Proxy'
+            };
+          }
+        }
+      } catch (e) {}
+
+      return null;
+    };
+
     // Generic Stock quote fetcher using Finnhub API
     const fetchFinnhubQuote = async (rawSymbol, apiKey = '') => {
       const symbol = cleanSymbol(rawSymbol);
@@ -177,7 +235,9 @@
         return await fetchVixQuote(apiKey);
       }
 
-      if (!apiKey || !apiKey.trim()) return null;
+      if (!apiKey || !apiKey.trim()) {
+        return await fetchYahooSymbolQuote(symbol);
+      }
 
       try {
         const res = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(symbol)}&token=${encodeURIComponent(apiKey.trim())}`);
@@ -204,15 +264,14 @@
             };
           }
         }
-      } catch (e) {
-        console.warn(`Finnhub fetch failed for ${symbol}:`, e);
-      }
-      return null;
+      } catch (e) {}
+
+      // Fallback to Yahoo if Finnhub failed
+      return await fetchYahooSymbolQuote(symbol);
     };
 
     function App() {
-      // Navigation: Top Bar
-      const [view, setView] = useState('tqqq'); // 'tqqq', 'hi5_core', 'portfolio', 'add', 'search', 'history', 'edit'
+      const [view, setView] = useState('tqqq');
 
       // Persistent Data
       const [records, setRecords] = useState(() => {
@@ -224,7 +283,7 @@
         return localStorage.getItem('st_finnhub_key') || '';
       });
 
-      // Saved Watchlist Stocks (Max 5)
+      // Saved Stocks (Max 5)
       const [savedStocks, setSavedStocks] = useState(() => {
         const saved = localStorage.getItem('st_saved_stocks');
         return saved ? JSON.parse(saved) : ['AAPL', 'NVDA', 'MSFT'];
@@ -241,7 +300,7 @@
         return saved ? JSON.parse(saved) : ['AAPL', 'MSFT', 'GOOGL'];
       });
 
-      // TQQQ Strategy Specific State
+      // TQQQ Strategy State
       const [accountValue, setAccountValue] = useState(() => {
         return localStorage.getItem('st_account_value') || '100000';
       });
@@ -302,38 +361,30 @@
       useEffect(() => { localStorage.setItem('st_hi5_tickers', JSON.stringify(hi5Tickers)); }, [hi5Tickers]);
       useEffect(() => { localStorage.setItem('st_core_tickers', JSON.stringify(coreTickers)); }, [coreTickers]);
 
-      // Tracked symbols
+      // All tracked symbols
       const allTrackedSymbols = useMemo(() => {
         const portfolioSyms = records.map(r => cleanSymbol(r.symbol));
         const strategySyms = ['QQQ', 'TQQQ', 'JEPQ', 'JAAA', 'MNQ', 'VIX', 'RSP'];
         return Array.from(new Set([...portfolioSyms, ...strategySyms, ...hi5Tickers, ...coreTickers, ...savedStocks])).filter(Boolean);
       }, [records, hi5Tickers, coreTickers, savedStocks]);
 
-      // Refresh Prices with VIX Multi-source fallback logic
+      // Refresh Prices via Finnhub & Public APIs
       const refreshPrices = async () => {
         setLoadingPrices(true);
         const newPrices = { ...prices };
-        
         for (let sym of allTrackedSymbols) {
-          let q = null;
-          if (sym === 'VIX' || sym === '^VIX') {
-            q = await fetchVixQuote(finnhubApiKey);
-          } else if (finnhubApiKey && finnhubApiKey.trim()) {
-            q = await fetchFinnhubQuote(sym, finnhubApiKey);
-          }
+          const q = await fetchFinnhubQuote(sym, finnhubApiKey);
           if (q) newPrices[sym] = q;
         }
-        
         setPrices(newPrices);
         setLoadingPrices(false);
       };
 
-      // Periodic Auto Refresh (Every 60 Seconds)
       useEffect(() => {
         refreshPrices();
         const interval = setInterval(() => {
           refreshPrices();
-        }, 60000);
+        }, 60000); // 60-second polling
         return () => clearInterval(interval);
       }, [allTrackedSymbols.join(','), finnhubApiKey]);
 
@@ -432,7 +483,7 @@
 
       const tqqqAccountVal = Number(accountValue) || 0;
 
-      // Grand Portfolio Summary Metrics (Value, Cost, Surplus/Deficit)
+      // Grand Portfolio Summary Metrics
       const grandTotalVal = tqqqAccountVal + hi5Metrics.marketVal + coreMetrics.marketVal + stockListMetrics.marketVal;
       const grandTotalCost = tqqqAccountVal + hi5Metrics.totalCost + coreMetrics.totalCost + stockListMetrics.totalCost;
       const totalSurplusDeficitVal = grandTotalVal - grandTotalCost;
@@ -455,9 +506,10 @@
         ];
       }, [grandTotalVal, tqqqAccountVal, hi5Metrics, coreMetrics, stockListMetrics]);
 
-      // TQQQ Strategy Calculations
+      // Dynamic Live TQQQ Strategy Quotes & Calculations
       const numQqqHigh = Number(qqqHistHigh) || 1;
-      const currentQqqPrice = prices['QQQ']?.price || numQqqHigh;
+      const qqqQuote = prices['QQQ'] || {};
+      const currentQqqPrice = qqqQuote.price || numQqqHigh;
       const qqqDiffPct = numQqqHigh > 0 ? ((currentQqqPrice - numQqqHigh) / numQqqHigh) * 100 : 0;
 
       const alloc50Tqqq = tqqqAccountVal * 0.50;
@@ -465,24 +517,30 @@
       const alloc25Jepq = tqqqAccountVal * 0.25;
       const alloc25Jaaa = tqqqAccountVal * 0.25;
 
-      const priceTqqq = prices['TQQQ']?.price || 70.0;
-      const priceJepq = prices['JEPQ']?.price || 55.0;
-      const priceJaaa = prices['JAAA']?.price || 50.0;
+      const tqqqQuote = prices['TQQQ'] || {};
+      const jepqQuote = prices['JEPQ'] || {};
+      const jaaaQuote = prices['JAAA'] || {};
+      const mnqQuote = prices['MNQ'] || {};
+
+      const priceTqqq = tqqqQuote.price || 75.0;
+      const priceJepq = jepqQuote.price || 56.0;
+      const priceJaaa = jaaaQuote.price || 50.5;
 
       const qtyTqqq = priceTqqq > 0 ? Math.round(alloc50Tqqq / priceTqqq) : 0;
       const qtyJepq = priceJepq > 0 ? Math.round(alloc25Jepq / priceJepq) : 0;
       const qtyJaaa = priceJaaa > 0 ? Math.round(alloc25Jaaa / priceJaaa) : 0;
 
-      // Index Hedging
+      // Index Hedging with Real-Time Futures or Fallback Multiplier
       const numBeta = Number(customBeta) || 1.8;
       const hedgeNotionalMarketVal = tqqqAccountVal * numBeta; 
-      const priceMnq = prices['MNQ']?.price || prices['QQQ']?.price * 40 || 20000;
+      const priceMnq = mnqQuote.price || (currentQqqPrice ? currentQqqPrice * 40 : 20000);
       const multiplierMnq = Number(mnqContractMultiplier) || 2;
       const singleMnqVal = priceMnq * multiplierMnq; 
       const mnqContractsNeeded = singleMnqVal > 0 ? (hedgeNotionalMarketVal / singleMnqVal).toFixed(2) : '0.00';
 
       // Live VIX Evaluation
-      const numVix = prices['VIX']?.price || Number(vixValue) || 13.5;
+      const vixQuote = prices['VIX'] || {};
+      const numVix = vixQuote.price || Number(vixValue) || 13.5;
       const isVixAlert = numVix < 14 || numVix > 35;
       const blackSwanVal = tqqqAccountVal * 0.02;
 
@@ -564,7 +622,7 @@
         }
       };
 
-      // Toggle Saved Watchlist Stock (Up to 5)
+      // Toggle Saved Stock (Up to 5)
       const toggleSaveStock = (symToToggle) => {
         const sym = cleanSymbol(symToToggle);
         if (!sym) return;
@@ -573,7 +631,7 @@
           setSavedStocks(prev => prev.filter(s => s !== sym));
         } else {
           if (savedStocks.length >= 5) {
-            alert('Saved list limit reached (Max 5 stocks). Please delete a saved stock first.');
+            alert('Saved list limit reached (Max 5 stocks). Delete a saved stock first.');
             return;
           }
           setSavedStocks(prev => [...prev, sym]);
@@ -592,7 +650,7 @@
         if (res) {
           setSearchResult(res);
         } else {
-          setSearchError(`未能在 API 數據源找到 ${sym} 的即時數據。請確認代碼或 API Key。`);
+          setSearchError(`未能在數據源找到 ${sym} 的即時數據。`);
         }
         setSearchLoading(false);
       };
@@ -626,7 +684,7 @@
         };
       };
 
-      // Header Top Right Widget based on view
+      // Header Top Right Widget
       const renderHeaderRightWidget = () => {
         if (view === 'tqqq') {
           return (
@@ -888,7 +946,7 @@
               </div>
             )}
 
-            {/* PAGE: TQQQ STRATEGY */}
+            {/* PAGE: TQQQ STRATEGY (DYNAMIC REAL-TIME METRICS) */}
             {view === 'tqqq' && (
               <div className="p-4 space-y-4">
                 
@@ -929,7 +987,12 @@
                   </div>
 
                   <div className="flex justify-between items-center bg-gray-950/90 p-2.5 rounded-xl border border-gray-800/80 text-xs">
-                    <span className="text-gray-400">QQQ 當前價: <strong className="text-white">{formatUSD(currentQqqPrice)}</strong></span>
+                    <span className="text-gray-400">
+                      QQQ 即時價: <strong className="text-white">{formatUSD(currentQqqPrice)}</strong>
+                      <span className={`ml-1 text-[10px] ${qqqQuote.changePercent >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        ({formatPercent(qqqQuote.changePercent)})
+                      </span>
+                    </span>
                     <span className="text-[11px] text-gray-300">相對高位價差: <strong className={qqqDiffPct >= 0 ? 'text-emerald-400' : 'text-red-400'}>{formatPercent(qqqDiffPct)}</strong></span>
                   </div>
 
@@ -941,7 +1004,7 @@
                   </div>
                 </div>
 
-                {/* 2nd Block: Combination */}
+                {/* 2nd Block: Combination (Real-time prices bound) */}
                 <div className="bg-gray-900/80 border border-blue-500/30 rounded-2xl p-4 space-y-3 shadow-lg">
                   <div className="flex justify-between items-center border-b border-gray-800 pb-2">
                     <h2 className="text-sm font-bold text-blue-400">2. Portfolio Combination (組合配置)</h2>
@@ -954,14 +1017,19 @@
                     {/* TQQQ 50% & 65% */}
                     <div className="bg-gray-950/80 p-3 rounded-xl border border-gray-800 space-y-1.5">
                       <div className="flex justify-between items-center">
-                        <span className="font-bold text-amber-300 text-sm">TQQQ (50% 目標配置)</span>
+                        <span className="font-bold text-amber-300 text-sm flex items-center gap-1.5">
+                          TQQQ
+                          <span className={`text-[10px] font-mono ${tqqqQuote.changePercent >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                            {formatPercent(tqqqQuote.changePercent)}
+                          </span>
+                        </span>
                         <span className="text-[11px] text-red-400 font-bold bg-red-950/80 border border-red-800/60 px-2 py-0.5 rounded-md">
                           65% 警戒上限: {formatUSD(alloc65Tqqq)}
                         </span>
                       </div>
                       <div className="flex justify-between text-gray-300 text-[11px]">
                         <span>預期金額: <strong className="text-white">{formatUSD(alloc50Tqqq)}</strong></span>
-                        <span>現價: <strong className="text-amber-300">{formatUSD(priceTqqq)}</strong></span>
+                        <span>即時價: <strong className="text-amber-300">{formatUSD(priceTqqq)}</strong></span>
                         <span>預期股數: <strong className="text-cyan-300 font-bold">{qtyTqqq} 股</strong></span>
                       </div>
                     </div>
@@ -969,12 +1037,17 @@
                     {/* JEPQ 25% */}
                     <div className="bg-gray-950/80 p-3 rounded-xl border border-gray-800 space-y-1.5">
                       <div className="flex justify-between items-center">
-                        <span className="font-bold text-blue-300 text-sm">JEPQ (25% 目標配置)</span>
+                        <span className="font-bold text-blue-300 text-sm flex items-center gap-1.5">
+                          JEPQ
+                          <span className={`text-[10px] font-mono ${jepqQuote.changePercent >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                            {formatPercent(jepqQuote.changePercent)}
+                          </span>
+                        </span>
                         <span className="text-[11px] text-gray-400">高股息套利</span>
                       </div>
                       <div className="flex justify-between text-gray-300 text-[11px]">
                         <span>預期金額: <strong className="text-white">{formatUSD(alloc25Jepq)}</strong></span>
-                        <span>現價: <strong className="text-blue-300">{formatUSD(priceJepq)}</strong></span>
+                        <span>即時價: <strong className="text-blue-300">{formatUSD(priceJepq)}</strong></span>
                         <span>預期股數: <strong className="text-cyan-300 font-bold">{qtyJepq} 股</strong></span>
                       </div>
                     </div>
@@ -982,22 +1055,32 @@
                     {/* JAAA 25% */}
                     <div className="bg-gray-950/80 p-3 rounded-xl border border-gray-800 space-y-1.5">
                       <div className="flex justify-between items-center">
-                        <span className="font-bold text-purple-300 text-sm">JAAA (25% 目標配置)</span>
+                        <span className="font-bold text-purple-300 text-sm flex items-center gap-1.5">
+                          JAAA
+                          <span className={`text-[10px] font-mono ${jaaaQuote.changePercent >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                            {formatPercent(jaaaQuote.changePercent)}
+                          </span>
+                        </span>
                         <span className="text-[11px] text-gray-400">AAA 級債券避險</span>
                       </div>
                       <div className="flex justify-between text-gray-300 text-[11px]">
                         <span>預期金額: <strong className="text-white">{formatUSD(alloc25Jaaa)}</strong></span>
-                        <span>現價: <strong className="text-purple-300">{formatUSD(priceJaaa)}</strong></span>
+                        <span>即時價: <strong className="text-purple-300">{formatUSD(priceJaaa)}</strong></span>
                         <span>預期股數: <strong className="text-cyan-300 font-bold">{qtyJaaa} 股</strong></span>
                       </div>
                     </div>
                   </div>
                 </div>
 
-                {/* 3rd Block: Index Hedging */}
+                {/* 3rd Block: Index Hedging (MNQ Futures Live Bound) */}
                 <div className="bg-gray-900/80 border border-purple-500/30 rounded-2xl p-4 space-y-3 shadow-lg">
                   <div className="flex justify-between items-center border-b border-gray-800 pb-2">
-                    <h2 className="text-sm font-bold text-purple-400">3. Index Hedging (指數對沖)</h2>
+                    <h2 className="text-sm font-bold text-purple-400 flex items-center gap-1.5">
+                      3. Index Hedging (MNQ=F 期貨)
+                      <span className={`text-[10px] font-mono ${mnqQuote.changePercent >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        ({formatPercent(mnqQuote.changePercent)})
+                      </span>
+                    </h2>
                     <span className="text-[10px] text-purple-300 bg-purple-950 border border-purple-800 px-2 py-0.5 rounded-full">
                       做空 MNQ 對沖
                     </span>
@@ -1026,7 +1109,7 @@
                       <hr className="border-gray-800" />
 
                       <div className="text-[11px] text-gray-300 font-mono">
-                        應持有期貨合約數量 = 應對沖市值 ({formatUSD(hedgeNotionalMarketVal)}) / (MNQ現價 {formatUSD(priceMnq)} &times; 乘數 {multiplierMnq})
+                        應持有期貨合約數量 = 應對沖市值 ({formatUSD(hedgeNotionalMarketVal)}) / (MNQ即時價 {formatUSD(priceMnq)} &times; 乘數 {multiplierMnq})
                       </div>
                       <div className="text-base font-black text-cyan-300">
                         = {mnqContractsNeeded} 張 MNQ 期貨合約
@@ -1039,12 +1122,15 @@
                   </div>
                 </div>
 
-                {/* 4th Block: Black Swan (VIX Live Fix) */}
+                {/* 4th Block: Black Swan (VIX Live Index Bound) */}
                 <div className="bg-gray-900/80 border border-red-500/30 rounded-2xl p-4 space-y-3 shadow-lg">
                   <div className="flex justify-between items-center border-b border-gray-800 pb-2">
-                    <h2 className="text-sm font-bold text-red-400">4. Black Swan Insurance (黑天鵝保險)</h2>
+                    <h2 className="text-sm font-bold text-red-400 flex items-center gap-1">
+                      4. Black Swan Insurance
+                      <span className="text-[10px] text-gray-400 font-mono">({vixQuote.source || 'Live'})</span>
+                    </h2>
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${isVixAlert ? 'bg-red-600 text-white animate-pulse' : 'bg-emerald-950 text-emerald-400'}`}>
-                      VIX: {numVix.toFixed(2)} {isVixAlert ? '🚨 觸發警報' : '正常'}
+                      VIX 即時: {Number(numVix).toFixed(2)} {isVixAlert ? '🚨 警報' : '正常'}
                     </span>
                   </div>
 
@@ -1057,7 +1143,7 @@
                     {isVixAlert && (
                       <div className="p-2 bg-red-950/80 border border-red-800 text-red-200 rounded-xl text-[11px] font-bold flex items-center gap-1.5">
                         <Icons.Alert />
-                        <span>VIX 目前為 {numVix.toFixed(2)} (超出的警戒區間: &lt;14 或 &gt;35)，請檢查執行條件！</span>
+                        <span>VIX 目前為 {Number(numVix).toFixed(2)} (超出警戒區間: &lt;14 或 &gt;35)，請檢查執行條件！</span>
                       </div>
                     )}
 
@@ -1293,7 +1379,7 @@
               </div>
             )}
 
-            {/* PAGE 3: SEARCH / API & PORTFOLIO SUMMARY WITH SURPLUS/DEFICIT & SAVED WATCHLIST */}
+            {/* PAGE 3: SEARCH / API & PORTFOLIO SUMMARY */}
             {(view === 'search' || view === 'settings') && (
               <div className="p-4 space-y-5">
                 
@@ -1340,7 +1426,7 @@
                     ))}
                   </div>
 
-                  {/* Breakdown List with Asset Weight % & Return Performance % */}
+                  {/* Breakdown List */}
                   <div className="grid grid-cols-2 gap-2 text-xs pt-1">
                     {portfolioSummary.map((item, idx) => {
                       const hasPerf = item.perf !== null && item.perf !== undefined;
@@ -1410,7 +1496,7 @@
                   )}
                 </div>
 
-                {/* 3. Stock Search Block with Detailed Metrics */}
+                {/* 3. Stock Search Block */}
                 <div className="space-y-3">
                   <h2 className="text-base font-bold text-white">Stock Search</h2>
                   <div className="flex gap-2">
@@ -1464,7 +1550,7 @@
                         </div>
                       </div>
 
-                      {/* Detailed Finnhub Stock Search Metrics */}
+                      {/* Stock Details */}
                       <div className="grid grid-cols-3 gap-2 text-xs">
                         <div className="bg-gray-950/80 border border-gray-800 p-2 rounded-xl">
                           <span className="text-[9px] text-gray-400 block">Open (開盤價)</span>
